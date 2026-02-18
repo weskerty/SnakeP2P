@@ -2,84 +2,85 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Trystero Socket Test</title>
+  <title>Trystero Test</title>
   <style>
-    body { font-family: monospace; background: #0a0a0f; color: #e0e0e0; padding: 20px; max-width: 800px; }
-    h2 { color: #00ff88; margin-bottom: 16px; }
-    #log { background: #12121a; padding: 15px; border-radius: 6px; white-space: pre-wrap; line-height: 1.8; max-height: 60vh; overflow-y: auto; }
-    .ok  { color: #00ff88; }
-    .err { color: #ff3366; }
-    .inf { color: #ffcc00; }
-    .dim { color: #555; }
+    body { font-family: monospace; background: #0a0a0f; color: #e0e0e0; padding: 20px; max-width: 820px; }
+    h2 { color: #00ff88; margin-bottom: 12px; }
+    #info { background: #1a1a2e; padding: 10px; border-radius: 6px; margin-bottom: 12px; line-height: 2; font-size: .85rem; }
+    #log { background: #12121a; padding: 14px; border-radius: 6px; white-space: pre-wrap; line-height: 1.8; max-height: 65vh; overflow-y: auto; }
+    .ok   { color: #00ff88; }
+    .err  { color: #ff3366; }
+    .inf  { color: #ffcc00; }
     .peer { color: #88aaff; }
-    #info { background: #1a1a2e; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: .85rem; line-height: 1.8; }
+    .dim  { color: #555; }
     button { font-family: monospace; background: #1e1e2e; color: #00ff88; border: 1px solid #00ff88; padding: 8px 16px; cursor: pointer; margin: 4px 4px 12px 0; }
-    button:hover { background: #00ff88; color: #0a0a0f; }
+    button:hover:not(:disabled) { background: #00ff88; color: #0a0a0f; }
     button:disabled { opacity: .4; cursor: default; }
   </style>
 </head>
 <body>
-  <h2>Trystero Socket Diagnostics</h2>
+  <h2>Trystero Test v2</h2>
   <div id="info">
     HTTPS: <b id="is-https">-</b> &nbsp;|&nbsp;
     crypto.subtle: <b id="has-crypto">-</b> &nbsp;|&nbsp;
-    My ID: <b id="my-id">-</b> &nbsp;|&nbsp;
+    selfId: <b id="my-id">-</b> &nbsp;|&nbsp;
     Peers: <b id="peer-count">0</b>
   </div>
-  <button id="btn-torrent">Connect BitTorrent</button>
-  <button id="btn-nostr">Connect Nostr</button>
+  <button id="btn-nostr">Nostr (default)</button>
+  <button id="btn-torrent">BitTorrent</button>
+  <button id="btn-mqtt">MQTT</button>
   <button onclick="clearLog()">Clear</button>
   <div id="log"></div>
 
 <script type="module">
-const elLog    = document.getElementById('log')
-const elHttps  = document.getElementById('is-https')
-const elCrypto = document.getElementById('has-crypto')
-const elMyId   = document.getElementById('my-id')
-const elCount  = document.getElementById('peer-count')
-const btnT     = document.getElementById('btn-torrent')
-const btnN     = document.getElementById('btn-nostr')
+const elLog   = document.getElementById('log')
+const elHttps = document.getElementById('is-https')
+const elCryp  = document.getElementById('has-crypto')
+const elMyId  = document.getElementById('my-id')
+const elCount = document.getElementById('peer-count')
 
 let room = null
 let peers = {}
 let pollId = null
+
 const RS = ['CONNECTING','OPEN','CLOSING','CLOSED']
 
 function log(msg, cls = '') {
-  const ts   = new Date().toLocaleTimeString()
-  const line = document.createElement('div')
-  line.className = cls
-  line.textContent = `[${ts}] ${msg}`
-  elLog.appendChild(line)
+  const d = document.createElement('div')
+  d.className = cls
+  d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`
+  elLog.appendChild(d)
   elLog.scrollTop = elLog.scrollHeight
 }
-
 window.clearLog = () => elLog.innerHTML = ''
 
-elHttps.textContent  = location.protocol === 'https:' ? 'YES' : 'NO — puede fallar en Safari/iOS'
-elHttps.style.color  = location.protocol === 'https:' ? '#00ff88' : '#ff3366'
-elCrypto.textContent = !!window.crypto?.subtle ? 'YES' : 'NO'
-elCrypto.style.color = !!window.crypto?.subtle ? '#00ff88' : '#ff3366'
+const isHttps = location.protocol === 'https:'
+const hasCrypto = !!window.crypto?.subtle
 
-log(`Protocol: ${location.protocol}`, location.protocol === 'https:' ? 'ok' : 'err')
-log(`crypto.subtle: ${!!window.crypto?.subtle}`, window.crypto?.subtle ? 'ok' : 'err')
-log(`UA: ${navigator.userAgent.slice(0,100)}`, 'dim')
+elHttps.textContent = isHttps ? 'YES' : 'NO (Safari/iOS fallara)'
+elHttps.style.color = isHttps ? '#00ff88' : '#ff3366'
+elCryp.textContent = hasCrypto ? 'YES' : 'NO'
+elCryp.style.color = hasCrypto ? '#00ff88' : '#ff3366'
+
+log(`Protocol: ${location.protocol}`, isHttps ? 'ok' : 'inf')
+log(`crypto.subtle: ${hasCrypto}`, hasCrypto ? 'ok' : 'err')
+log(`UA: ${navigator.userAgent.slice(0, 80)}`, 'dim')
+log('Selecciona estrategia. Misma estrategia en ambas tabs.', 'inf')
 
 function pollSockets() {
-  if (!room?.getRelaySockets) return
+  // getRelaySockets es global del modulo, no del room
+  // se accede via import — ver connect()
+  if (!window._getRelaySockets) return
   try {
-    const sockets = room.getRelaySockets()
+    const sockets = window._getRelaySockets()
     const entries = Object.entries(sockets)
-    if (!entries.length) { log('Sockets: ninguno aun...', 'dim'); return }
+    if (!entries.length) { log('  Sin sockets aun...', 'dim'); return }
     for (const [url, ws] of entries) {
       const state = RS[ws.readyState] ?? ws.readyState
-      const cls   = ws.readyState === 1 ? 'ok' : ws.readyState === 0 ? 'inf' : 'err'
-      const host  = url.replace('wss://','').split('/')[0]
-      log(`  Socket ${host} → ${state}`, cls)
+      const cls = ws.readyState === 1 ? 'ok' : ws.readyState === 0 ? 'inf' : 'err'
+      log(`  ${url.split('/')[2]} → ${state}`, cls)
     }
-  } catch(e) {
-    log(`getRelaySockets err: ${e.message}`, 'err')
-  }
+  } catch(e) { log(`getRelaySockets err: ${e.message}`, 'err') }
 }
 
 async function connect(strategy) {
@@ -89,45 +90,58 @@ async function connect(strategy) {
     clearInterval(pollId)
     room = null; peers = {}
     elCount.textContent = 0
+    window._getRelaySockets = null
   }
 
-  btnT.disabled = true
-  btnN.disabled = true
+  ;['btn-nostr','btn-torrent','btn-mqtt'].forEach(id => document.getElementById(id).disabled = true)
   log(`\n--- ${strategy.toUpperCase()} ---`, 'inf')
 
   try {
-    const mod = await import(
-      strategy === 'torrent'
-        ? 'https://esm.run/trystero/torrent'
-        : 'https://esm.run/trystero/nostr'
-    )
-    const { joinRoom, selfId } = mod
+    const cdnBase = 'https://esm.run/trystero'
+    const url = strategy === 'nostr'    ? cdnBase
+              : strategy === 'torrent'  ? `${cdnBase}/torrent`
+              :                           `${cdnBase}/mqtt`
 
-    log(`Import OK | selfId: ${selfId}`, 'ok')
+    log(`Import: ${url}`, 'dim')
+    const mod = await import(url)
+    const { joinRoom, selfId, getRelaySockets } = mod
+
+    // guardar referencia global para pollSockets
+    window._getRelaySockets = getRelaySockets
+
+    log(`selfId: ${selfId}`, 'ok')
     elMyId.textContent = selfId
 
-    const ROOM = 'snake-test-sala-001'
-    const CFG  = { appId: 'snake-p2p-diag-v2', relayRedundancy: 4 }
+    const ROOM = 'snake-test-v2-001'
+    const CFG  = { appId: 'snake-p2p-test-v2', relayRedundancy: 3 }
 
-    log(`joinRoom("${ROOM}")...`, 'dim')
+    log(`joinRoom("${ROOM}", appId:"${CFG.appId}")`, 'dim')
     room = joinRoom(CFG, ROOM)
-    log('joinRoom OK — polling sockets cada 2s...', 'ok')
+    log('joinRoom OK', 'ok')
 
-    pollId = setInterval(pollSockets, 2000)
-    setTimeout(pollSockets, 800)
+    // makeAction ANTES de onPeerJoin — importante segun docs
+    const [sendPing, getPing] = room.makeAction('ping')
+    const [sendPong, getPong] = room.makeAction('pong')
 
-    const [sendMsg, getMsg] = room.makeAction('msg')
+    getPing((data, fromId) => {
+      log(`Ping de ${fromId.slice(0,10)} → respondiendo pong`, 'inf')
+      sendPong({ ts: data.ts }, fromId)
+    })
 
-    getMsg((data, fromId) => {
-      log(`MSG de ${fromId.slice(0,10)}: ${JSON.stringify(data)}`, 'peer')
-      sendMsg({ reply: 'pong', ts: Date.now() }, fromId)
+    getPong((data, fromId) => {
+      log(`Pong de ${fromId.slice(0,10)} RTT: ${Date.now() - data.ts}ms`, 'ok')
     })
 
     room.onPeerJoin(id => {
       peers[id] = true
       elCount.textContent = Object.keys(peers).length
       log(`PEER JOIN: ${id}`, 'peer')
-      sendMsg({ hello: 'ping', ts: Date.now() }, id)
+      log(`Enviando ping a ${id.slice(0,10)}...`, 'dim')
+      sendPing({ ts: Date.now() }, id)
+
+      // medir latencia con room.ping()
+      room.ping(id).then(ms => log(`room.ping(${id.slice(0,10)}) = ${ms}ms`, 'ok'))
+                   .catch(e => log(`room.ping err: ${e.message}`, 'err'))
     })
 
     room.onPeerLeave(id => {
@@ -136,19 +150,26 @@ async function connect(strategy) {
       log(`PEER LEAVE: ${id}`, 'err')
     })
 
-    log('Listo. Abre en otra tab con el mismo boton.', 'inf')
+    // poll sockets cada 3s
+    pollId = setInterval(() => {
+      log('-- sockets --', 'dim')
+      pollSockets()
+    }, 3000)
+    setTimeout(pollSockets, 1000)
+
+    log(`Listo. Abre otra tab → misma pagina → mismo boton (${strategy.toUpperCase()})`, 'inf')
 
   } catch(e) {
     log(`ERROR: ${e.message}`, 'err')
     log(e.stack || '', 'dim')
   }
 
-  btnT.disabled = false
-  btnN.disabled = false
+  ;['btn-nostr','btn-torrent','btn-mqtt'].forEach(id => document.getElementById(id).disabled = false)
 }
 
-btnT.onclick = () => connect('torrent')
-btnN.onclick = () => connect('nostr')
+document.getElementById('btn-nostr').onclick   = () => connect('nostr')
+document.getElementById('btn-torrent').onclick  = () => connect('torrent')
+document.getElementById('btn-mqtt').onclick     = () => connect('mqtt')
 
 window.addEventListener('unhandledrejection', e => log(`PROMISE ERR: ${e.reason}`, 'err'))
 window.addEventListener('error', e => log(`JS ERR: ${e.message}`, 'err'))
