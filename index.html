@@ -1,0 +1,38 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>Snake P2P</title>
+  <link rel="stylesheet" href="style.css">
+</head>
+<body>
+
+  <div id="lobby">
+    <h1>SNAKE P2P</h1>
+    <p id="status">Connecting to network...</p>
+    <button id="btn-find" disabled>Find Match</button>
+    <div id="searching" class="hidden">
+      <div class="spinner"></div>
+      <p>Searching for opponent...</p>
+    </div>
+  </div>
+
+  <div id="game-screen" class="hidden">
+    <div id="hud">
+      <span>YOU <b id="score-p1">0</b></span>
+      <span id="sync-status">●</span>
+      <span>RIVAL <b id="score-p2">0</b></span>
+    </div>
+    <canvas id="cv"></canvas>
+  </div>
+
+  <div id="gameover" class="hidden">
+    <h2 id="go-title">Game Over</h2>
+    <p id="go-msg"></p>
+    <button id="btn-replay">Find New Match</button>
+  </div>
+
+  <script type="module" src="game.js"></script>
+</body>
+</html>
