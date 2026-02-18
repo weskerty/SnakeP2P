@@ -2,37 +2,156 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <meta name="viewport" content="width=device-width, initial-scale=1.0">
-  <title>Snake P2P</title>
-  <link rel="stylesheet" href="style.css">
+  <title>Trystero Socket Test</title>
+  <style>
+    body { font-family: monospace; background: #0a0a0f; color: #e0e0e0; padding: 20px; max-width: 800px; }
+    h2 { color: #00ff88; margin-bottom: 16px; }
+    #log { background: #12121a; padding: 15px; border-radius: 6px; white-space: pre-wrap; line-height: 1.8; max-height: 60vh; overflow-y: auto; }
+    .ok  { color: #00ff88; }
+    .err { color: #ff3366; }
+    .inf { color: #ffcc00; }
+    .dim { color: #555; }
+    .peer { color: #88aaff; }
+    #info { background: #1a1a2e; padding: 10px; border-radius: 6px; margin-bottom: 12px; font-size: .85rem; line-height: 1.8; }
+    button { font-family: monospace; background: #1e1e2e; color: #00ff88; border: 1px solid #00ff88; padding: 8px 16px; cursor: pointer; margin: 4px 4px 12px 0; }
+    button:hover { background: #00ff88; color: #0a0a0f; }
+    button:disabled { opacity: .4; cursor: default; }
+  </style>
 </head>
 <body>
-
-  <div id="lobby">
-    <h1>SNAKE P2P</h1>
-    <p id="status">Connecting to network...</p>
-    <button id="btn-find" disabled>Find Match</button>
-    <div id="searching" class="hidden">
-      <div class="spinner"></div>
-      <p>Searching for opponent...</p>
-    </div>
+  <h2>Trystero Socket Diagnostics</h2>
+  <div id="info">
+    HTTPS: <b id="is-https">-</b> &nbsp;|&nbsp;
+    crypto.subtle: <b id="has-crypto">-</b> &nbsp;|&nbsp;
+    My ID: <b id="my-id">-</b> &nbsp;|&nbsp;
+    Peers: <b id="peer-count">0</b>
   </div>
+  <button id="btn-torrent">Connect BitTorrent</button>
+  <button id="btn-nostr">Connect Nostr</button>
+  <button onclick="clearLog()">Clear</button>
+  <div id="log"></div>
 
-  <div id="game-screen" class="hidden">
-    <div id="hud">
-      <span>YOU <b id="score-p1">0</b></span>
-      <span id="sync-status">●</span>
-      <span>RIVAL <b id="score-p2">0</b></span>
-    </div>
-    <canvas id="cv"></canvas>
-  </div>
+<script type="module">
+const elLog    = document.getElementById('log')
+const elHttps  = document.getElementById('is-https')
+const elCrypto = document.getElementById('has-crypto')
+const elMyId   = document.getElementById('my-id')
+const elCount  = document.getElementById('peer-count')
+const btnT     = document.getElementById('btn-torrent')
+const btnN     = document.getElementById('btn-nostr')
 
-  <div id="gameover" class="hidden">
-    <h2 id="go-title">Game Over</h2>
-    <p id="go-msg"></p>
-    <button id="btn-replay">Find New Match</button>
-  </div>
+let room = null
+let peers = {}
+let pollId = null
+const RS = ['CONNECTING','OPEN','CLOSING','CLOSED']
 
-  <script type="module" src="game.js"></script>
+function log(msg, cls = '') {
+  const ts   = new Date().toLocaleTimeString()
+  const line = document.createElement('div')
+  line.className = cls
+  line.textContent = `[${ts}] ${msg}`
+  elLog.appendChild(line)
+  elLog.scrollTop = elLog.scrollHeight
+}
+
+window.clearLog = () => elLog.innerHTML = ''
+
+elHttps.textContent  = location.protocol === 'https:' ? 'YES' : 'NO — puede fallar en Safari/iOS'
+elHttps.style.color  = location.protocol === 'https:' ? '#00ff88' : '#ff3366'
+elCrypto.textContent = !!window.crypto?.subtle ? 'YES' : 'NO'
+elCrypto.style.color = !!window.crypto?.subtle ? '#00ff88' : '#ff3366'
+
+log(`Protocol: ${location.protocol}`, location.protocol === 'https:' ? 'ok' : 'err')
+log(`crypto.subtle: ${!!window.crypto?.subtle}`, window.crypto?.subtle ? 'ok' : 'err')
+log(`UA: ${navigator.userAgent.slice(0,100)}`, 'dim')
+
+function pollSockets() {
+  if (!room?.getRelaySockets) return
+  try {
+    const sockets = room.getRelaySockets()
+    const entries = Object.entries(sockets)
+    if (!entries.length) { log('Sockets: ninguno aun...', 'dim'); return }
+    for (const [url, ws] of entries) {
+      const state = RS[ws.readyState] ?? ws.readyState
+      const cls   = ws.readyState === 1 ? 'ok' : ws.readyState === 0 ? 'inf' : 'err'
+      const host  = url.replace('wss://','').split('/')[0]
+      log(`  Socket ${host} → ${state}`, cls)
+    }
+  } catch(e) {
+    log(`getRelaySockets err: ${e.message}`, 'err')
+  }
+}
+
+async function connect(strategy) {
+  if (room) {
+    log('Leaving...', 'dim')
+    try { room.leave() } catch(e) {}
+    clearInterval(pollId)
+    room = null; peers = {}
+    elCount.textContent = 0
+  }
+
+  btnT.disabled = true
+  btnN.disabled = true
+  log(`\n--- ${strategy.toUpperCase()} ---`, 'inf')
+
+  try {
+    const mod = await import(
+      strategy === 'torrent'
+        ? 'https://esm.run/trystero/torrent'
+        : 'https://esm.run/trystero/nostr'
+    )
+    const { joinRoom, selfId } = mod
+
+    log(`Import OK | selfId: ${selfId}`, 'ok')
+    elMyId.textContent = selfId
+
+    const ROOM = 'snake-test-sala-001'
+    const CFG  = { appId: 'snake-p2p-diag-v2', relayRedundancy: 4 }
+
+    log(`joinRoom("${ROOM}")...`, 'dim')
+    room = joinRoom(CFG, ROOM)
+    log('joinRoom OK — polling sockets cada 2s...', 'ok')
+
+    pollId = setInterval(pollSockets, 2000)
+    setTimeout(pollSockets, 800)
+
+    const [sendMsg, getMsg] = room.makeAction('msg')
+
+    getMsg((data, fromId) => {
+      log(`MSG de ${fromId.slice(0,10)}: ${JSON.stringify(data)}`, 'peer')
+      sendMsg({ reply: 'pong', ts: Date.now() }, fromId)
+    })
+
+    room.onPeerJoin(id => {
+      peers[id] = true
+      elCount.textContent = Object.keys(peers).length
+      log(`PEER JOIN: ${id}`, 'peer')
+      sendMsg({ hello: 'ping', ts: Date.now() }, id)
+    })
+
+    room.onPeerLeave(id => {
+      delete peers[id]
+      elCount.textContent = Object.keys(peers).length
+      log(`PEER LEAVE: ${id}`, 'err')
+    })
+
+    log('Listo. Abre en otra tab con el mismo boton.', 'inf')
+
+  } catch(e) {
+    log(`ERROR: ${e.message}`, 'err')
+    log(e.stack || '', 'dim')
+  }
+
+  btnT.disabled = false
+  btnN.disabled = false
+}
+
+btnT.onclick = () => connect('torrent')
+btnN.onclick = () => connect('nostr')
+
+window.addEventListener('unhandledrejection', e => log(`PROMISE ERR: ${e.reason}`, 'err'))
+window.addEventListener('error', e => log(`JS ERR: ${e.message}`, 'err'))
+</script>
 </body>
 </html>
