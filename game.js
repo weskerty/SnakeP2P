@@ -283,3 +283,4 @@ btnRply.addEventListener('click', resetToLobby)
 
 // ── Boot ──────────────────────────────────────────────────────────────────
 elSt.textContent = 'Press Find Match'
+btnFind.disabled = false
