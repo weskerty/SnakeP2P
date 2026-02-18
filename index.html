@@ -2,138 +2,64 @@
 <html lang="en">
 <head>
   <meta charset="UTF-8">
-  <title>Trystero Test v3</title>
-  <style>
-    body { font-family: monospace; background: #0a0a0f; color: #e0e0e0; padding: 20px; max-width: 820px; }
-    h2 { color: #00ff88; margin-bottom: 12px; }
-    #info { background: #1a1a2e; padding: 10px; border-radius: 6px; margin-bottom: 12px; line-height: 2; font-size: .85rem; }
-    #log { background: #12121a; padding: 14px; border-radius: 6px; white-space: pre-wrap; line-height: 1.8; max-height: 65vh; overflow-y: auto; }
-    .ok   { color: #00ff88; }
-    .err  { color: #ff3366; }
-    .inf  { color: #ffcc00; }
-    .peer { color: #88aaff; }
-    .dim  { color: #555; }
-    button { font-family: monospace; background: #1e1e2e; color: #00ff88; border: 1px solid #00ff88; padding: 8px 16px; cursor: pointer; margin: 4px 4px 12px 0; }
-    button:hover:not(:disabled) { background: #00ff88; color: #0a0a0f; }
-    button:disabled { opacity: .4; cursor: default; }
-  </style>
+  <meta name="viewport" content="width=device-width, initial-scale=1.0, user-scalable=no">
+  <title>Snake P2P</title>
+  <link rel="stylesheet" href="style.css">
 </head>
 <body>
-  <h2>Trystero Test v3 — stable 0.20.1</h2>
-  <div id="info">
-    HTTPS: <b id="is-https">-</b> &nbsp;|&nbsp;
-    selfId: <b id="my-id">-</b> &nbsp;|&nbsp;
-    Peers: <b id="peer-count">0</b>
+
+  <div id="lobby">
+    <div class="lb-inner">
+      <h1>SNAKE<span>P2P</span></h1>
+      <p id="status">Connecting...</p>
+      <button id="btn-find" disabled>FIND MATCH</button>
+      <div id="searching" class="hidden">
+        <div class="spinner"></div>
+        <p>Searching opponent...</p>
+      </div>
+    </div>
   </div>
-  <button id="btn-torrent">BitTorrent 0.20.1</button>
-  <button id="btn-nostr">Nostr 0.20.1</button>
-  <button onclick="document.getElementById('log').innerHTML=''">Clear</button>
-  <div id="log"></div>
 
-<script type="module">
-const elLog   = document.getElementById('log')
-const elHttps = document.getElementById('is-https')
-const elMyId  = document.getElementById('my-id')
-const elCount = document.getElementById('peer-count')
+  <div id="game-screen" class="hidden">
+    <div id="hud">
+      <div class="hud-player p1">
+        <span class="hud-label">YOU</span>
+        <span class="hud-score" id="score-p1">0</span>
+      </div>
+      <div class="hud-center">
+        <span id="sync-status">●</span>
+      </div>
+      <div class="hud-player p2">
+        <span class="hud-score" id="score-p2">0</span>
+        <span class="hud-label">RIVAL</span>
+      </div>
+    </div>
+    <div id="canvas-wrap">
+      <canvas id="cv"></canvas>
+    </div>
+    <div id="dpad">
+      <div id="dpad-grid">
+        <div></div>
+        <button class="dp" data-dir="up">▲</button>
+        <div></div>
+        <button class="dp" data-dir="left">◀</button>
+        <div class="dp-center"></div>
+        <button class="dp" data-dir="right">▶</button>
+        <div></div>
+        <button class="dp" data-dir="down">▼</button>
+        <div></div>
+      </div>
+    </div>
+  </div>
 
-let room = null
-let peers = {}
+  <div id="gameover" class="hidden">
+    <div class="go-inner">
+      <h2 id="go-title">Game Over</h2>
+      <p id="go-msg"></p>
+      <button id="btn-replay">FIND NEW MATCH</button>
+    </div>
+  </div>
 
-const isHttps = location.protocol === 'https:'
-elHttps.textContent = isHttps ? 'YES' : 'NO'
-elHttps.style.color = isHttps ? '#00ff88' : '#ff3366'
-
-function log(msg, cls = '') {
-  const d = document.createElement('div')
-  d.className = cls
-  d.textContent = `[${new Date().toLocaleTimeString()}] ${msg}`
-  elLog.appendChild(d)
-  elLog.scrollTop = elLog.scrollHeight
-}
-
-log(`Protocol: ${location.protocol}`, isHttps ? 'ok' : 'inf')
-log(`crypto.subtle: ${!!window.crypto?.subtle}`, window.crypto?.subtle ? 'ok' : 'err')
-
-// URLs con version especifica 0.20.1 — ultima estable antes de beta
-const V = '0.20.1'
-const URLS = {
-  torrent: `https://esm.run/trystero@${V}/torrent`,
-  nostr:   `https://esm.run/trystero@${V}`
-}
-
-async function connect(strategy) {
-  if (room) {
-    try { room.leave() } catch(e) {}
-    room = null; peers = {}
-    elCount.textContent = 0
-  }
-
-  ;['btn-torrent','btn-nostr'].forEach(id => document.getElementById(id).disabled = true)
-  log(`\n--- ${strategy.toUpperCase()} @ v${V} ---`, 'inf')
-
-  try {
-    log(`Import: ${URLS[strategy]}`, 'dim')
-    const { joinRoom, selfId, getRelaySockets } = await import(URLS[strategy])
-
-    log(`selfId: ${selfId}`, 'ok')
-    elMyId.textContent = selfId
-
-    const CFG  = { appId: 'snake-p2p-stable-v1', relayRedundancy: 2 }
-    const ROOM = 'test-sala-stable-001'
-
-    log(`joinRoom("${ROOM}")...`, 'dim')
-    room = joinRoom(CFG, ROOM)
-    log('joinRoom OK — esperando peer...', 'ok')
-
-    // mostrar sockets una vez
-    setTimeout(() => {
-      if (!getRelaySockets) { log('getRelaySockets no disponible en esta version', 'inf'); return }
-      const sockets = getRelaySockets()
-      for (const [url, ws] of Object.entries(sockets)) {
-        const states = ['CONNECTING','OPEN','CLOSING','CLOSED']
-        log(`  ${url.split('/')[2]} → ${states[ws.readyState]}`, ws.readyState === 1 ? 'ok' : 'inf')
-      }
-    }, 2000)
-
-    // acciones ANTES de onPeerJoin
-    const [sendPing, getPing] = room.makeAction('ping')
-    const [sendPong, getPong] = room.makeAction('pong')
-
-    getPing((d, from) => {
-      log(`Ping de ${from.slice(0,10)} → pong`, 'inf')
-      sendPong({ ts: d.ts }, from)
-    })
-    getPong((d, from) => log(`Pong RTT: ${Date.now()-d.ts}ms de ${from.slice(0,10)}`, 'ok'))
-
-    room.onPeerJoin(id => {
-      peers[id] = true
-      elCount.textContent = Object.keys(peers).length
-      log(`PEER JOIN: ${id}`, 'peer')
-      sendPing({ ts: Date.now() }, id)
-      room.ping(id).then(ms => log(`room.ping = ${ms}ms`, 'ok')).catch(e => log(`ping err: ${e.message}`, 'err'))
-    })
-
-    room.onPeerLeave(id => {
-      delete peers[id]
-      elCount.textContent = Object.keys(peers).length
-      log(`PEER LEAVE: ${id}`, 'err')
-    })
-
-    log(`Listo. Abre otra tab → mismo boton (${strategy.toUpperCase()})`, 'inf')
-
-  } catch(e) {
-    log(`ERROR: ${e.message}`, 'err')
-    log(e.stack || '', 'dim')
-  }
-
-  ;['btn-torrent','btn-nostr'].forEach(id => document.getElementById(id).disabled = false)
-}
-
-document.getElementById('btn-torrent').onclick = () => connect('torrent')
-document.getElementById('btn-nostr').onclick   = () => connect('nostr')
-
-window.addEventListener('unhandledrejection', e => log(`PROMISE ERR: ${e.reason}`, 'err'))
-window.addEventListener('error', e => log(`JS ERR: ${e.message}`, 'err'))
-</script>
+  <script type="module" src="game.js"></script>
 </body>
 </html>

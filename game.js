@@ -1,86 +1,68 @@
-import { joinRoom } from 'https://esm.run/trystero/torrent'
+import { joinRoom, selfId } from 'https://esm.run/trystero@0.20.1'
 
-// ── Config ──────────────────────────────────────────────────────────────────
-const CFG      = { appId: 'snake-p2p-game-v1' }
-const LOBBY    = 'snake-public-lobby-v1'
-const COLS     = 30
-const ROWS     = 30
-const CELL     = 18
-const TICK_MS  = 120
-const HASH_INT = 30  // ticks entre hash check
+const CFG     = { appId: 'snake-p2p-game-v1', relayRedundancy: 2 }
+const ROOM    = 'snake-public-lobby-v1'
+const COLS    = 30
+const ROWS    = 30
+const TICK_MS = 120
+const HASH_IV = 30
 
-// ── State ────────────────────────────────────────────────────────────────────
 let room, sendInput, getInput, sendInit, getInit, sendHash, getHash
-let myId, peerId, isHost
-let tick = 0, gameLoop = null
-let seed, rngState
+let peerId, isHost, myIdx
+let tick = 0, loopId = null, seed
 let snakes, fruits, scores, nextDir
 
-// ── DOM ──────────────────────────────────────────────────────────────────────
-const $ = id => document.getElementById(id)
-const lobby      = $('lobby')
-const gameScreen = $('game-screen')
-const gameOver   = $('gameover')
-const cv         = $('cv')
-const ctx        = cv.getContext('2d')
-const elStatus   = $('status')
-const elSearching = $('searching')
-const btnFind    = $('btn-find')
-const btnReplay  = $('btn-replay')
-const elS1       = $('score-p1')
-const elS2       = $('score-p2')
-const elSync     = $('sync-status')
-const elGoTitle  = $('go-title')
-const elGoMsg    = $('go-msg')
+const $       = id => document.getElementById(id)
+const lobby   = $('lobby')
+const gScreen = $('game-screen')
+const gOver   = $('gameover')
+const cv      = $('cv')
+const ctx     = cv.getContext('2d')
+const elSt    = $('status')
+const elSrch  = $('searching')
+const btnFind = $('btn-find')
+const btnRply = $('btn-replay')
+const elS1    = $('score-p1')
+const elS2    = $('score-p2')
+const elSync  = $('sync-status')
+const elGoT   = $('go-title')
+const elGoM   = $('go-msg')
 
-cv.width  = COLS * CELL
-cv.height = ROWS * CELL
+// ── Canvas sizing ─────────────────────────────────────────────────────────
+let CELL = 18
 
-// ── RNG determinista (mulberry32) ────────────────────────────────────────────
-const mkRng = s => () => {
-  s += 0x6d2b79f5
+function resizeCanvas() {
+  const hud   = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hud-h'))  || 44
+  const dpad  = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--dpad-h')) || 160
+  const avW   = window.innerWidth
+  const avH   = window.innerHeight - hud - dpad - 2
+  CELL = Math.floor(Math.min(avW / COLS, avH / ROWS))
+  cv.width  = COLS * CELL
+  cv.height = ROWS * CELL
+}
+
+resizeCanvas()
+window.addEventListener('resize', () => { resizeCanvas(); if (snakes) render() })
+
+// ── RNG determinista ──────────────────────────────────────────────────────
+const rng32 = s => () => {
+  s = s + 0x6d2b79f5 | 0
   let t = Math.imul(s ^ s >>> 15, 1 | s)
   t ^= t + Math.imul(t ^ t >>> 7, 61 | t)
   return ((t ^ t >>> 14) >>> 0) / 4294967296
 }
+const rngInt = (r, n) => Math.floor(r() * n)
 
-const rngInt = (rng, max) => Math.floor(rng() * max)
+// ── Trystero ──────────────────────────────────────────────────────────────
+function setupRoom() {
+  room = joinRoom(CFG, ROOM)
 
-// ── Lobby / Trystero ─────────────────────────────────────────────────────────
-async function connectLobby() {
-  elStatus.textContent = 'Joining network...'
-  room = joinRoom(CFG, LOBBY)
-  myId = Math.random().toString(36).slice(2, 8)
-
-  setupActions()
-
-  room.onPeerJoin(id => {
-    if (peerId) return  // ya tenemos oponente
-    peerId = id
-    elStatus.textContent = 'Opponent found! Starting...'
-
-    // el peer con id menor es host
-    isHost = myId < peerId
-
-    if (isHost) {
-      seed = Math.floor(Math.random() * 0xFFFFFFFF)
-      sendInit({ seed, hostId: myId })
-      startGame()
-    }
-  })
-
-  room.onPeerLeave(id => {
-    if (id === peerId && gameLoop) endGame(false, 'Opponent disconnected')
-  })
-
-  elStatus.textContent = 'Network ready'
-  btnFind.disabled = false
-}
-
-function setupActions() {
-  ;[sendInput, getInput] = room.makeAction('input')
-  ;[sendInit,  getInit]  = room.makeAction('init')
-  ;[sendHash,  getHash]  = room.makeAction('hash')
+  const a0 = room.makeAction('input')
+  const a1 = room.makeAction('init')
+  const a2 = room.makeAction('hash')
+  ;[sendInput, getInput] = a0
+  ;[sendInit,  getInit]  = a1
+  ;[sendHash,  getHash]  = a2
 
   getInit(({ seed: s, hostId }) => {
     if (peerId && peerId !== hostId) return
@@ -90,263 +72,216 @@ function setupActions() {
     startGame()
   })
 
-  getInput(({ dir }, id) => {
-    if (id !== peerId) return
-    // peer mueve su serpiente (idx 1 desde perspectiva del host)
-    const pi = isHost ? 1 : 0
-    const cur = nextDir[pi]
-    if (!opposite(dir, cur)) nextDir[pi] = dir
+  getInput(({ dir }) => {
+    if (!snakes) return
+    const ri = isHost ? 1 : 0
+    if (!opp(dir, nextDir[ri])) nextDir[ri] = dir
   })
 
-  getHash(({ h, t }, id) => {
-    if (id !== peerId) return
-    const mine = stateHash(t)
-    if (mine !== h) {
-      elSync.textContent = '⚠'
-      elSync.classList.add('desynced')
-    } else {
-      elSync.textContent = '●'
-      elSync.classList.remove('desynced')
+  getHash(({ h, t }) => {
+    const ok = stateHash(t) === h
+    elSync.textContent = ok ? '●' : '⚠'
+    elSync.classList.toggle('desynced', !ok)
+  })
+
+  room.onPeerJoin(id => {
+    if (peerId) return
+    peerId = id
+    elSt.textContent = 'Opponent found!'
+    isHost = selfId < peerId
+    myIdx  = isHost ? 0 : 1
+    if (isHost) {
+      seed = Math.random() * 0xFFFFFFFF | 0
+      sendInit({ seed, hostId: selfId })
+      startGame()
     }
+  })
+
+  room.onPeerLeave(id => {
+    if (id !== peerId) return
+    if (loopId) { clearInterval(loopId); loopId = null }
+    showEnd(null, 'Opponent disconnected')
   })
 }
 
-// ── Game init ────────────────────────────────────────────────────────────────
+// ── Game ──────────────────────────────────────────────────────────────────
 function startGame() {
-  room.leaveRoom?.()  // salir lobby para no agarrar mas peers (opcional, trystero no lo expone directo)
-
   tick = 0
-  rngState = seed
-  const rng = mkRng(rngState)
-
-  // host = serpiente 0 (verde, izq), guest = serpiente 1 (roja, der)
+  const rng = rng32(seed)
   snakes = [
-    { body: [{x:5, y:14}, {x:4,y:14}, {x:3,y:14}], alive: true },
-    { body: [{x:24,y:15}, {x:25,y:15}, {x:26,y:15}], alive: true }
+    { body: [{x:5,y:14},{x:4,y:14},{x:3,y:14}], alive: true },
+    { body: [{x:24,y:15},{x:25,y:15},{x:26,y:15}], alive: true }
   ]
-  nextDir = [ {x:1,y:0}, {x:-1,y:0} ]
-  scores  = [0, 0]
+  nextDir = [{x:1,y:0},{x:-1,y:0}]
+  scores  = [0,0]
   fruits  = []
-
-  // frutas iniciales
-  const rng2 = mkRng(seed)
-  for (let i = 0; i < 3; i++) spawnFruit(rng2)
-
-  // guardar rng consistente
-  rngState = rng2  // referencia — usamos closure
+  for (let i = 0; i < 3; i++) spawnFruit(rng)
 
   lobby.classList.add('hidden')
-  gameOver.classList.add('hidden')
-  gameScreen.classList.remove('hidden')
+  gOver.classList.add('hidden')
+  gScreen.classList.remove('hidden')
+  resizeCanvas()
 
-  gameLoop = setInterval(gameTick, TICK_MS)
+  loopId = setInterval(() => gameTick(rng), TICK_MS)
 }
 
-// ── Tick ─────────────────────────────────────────────────────────────────────
-function gameTick() {
-  const rng = mkRng(seed + tick * 1337)  // rng determinista por tick para frutas
-
-  // mover ambas serpientes
+function gameTick(rng) {
   for (let i = 0; i < 2; i++) {
     if (!snakes[i].alive) continue
-    const s = snakes[i]
+    const s    = snakes[i]
     const head = { x: s.body[0].x + nextDir[i].x, y: s.body[0].y + nextDir[i].y }
 
-    // choque pared
-    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) {
-      s.alive = false; continue
-    }
-
-    // choque consigo mismo
-    if (s.body.some(c => c.x === head.x && c.y === head.y)) {
-      s.alive = false; continue
-    }
-
-    // choque con rival
-    const rival = snakes[1 - i]
-    if (rival.body.some(c => c.x === head.x && c.y === head.y)) {
-      s.alive = false; continue
-    }
+    if (head.x < 0 || head.x >= COLS || head.y < 0 || head.y >= ROWS) { s.alive = false; continue }
+    if (s.body.some(c => c.x === head.x && c.y === head.y))             { s.alive = false; continue }
+    if (snakes[1-i].body.some(c => c.x === head.x && c.y === head.y))   { s.alive = false; continue }
 
     s.body.unshift(head)
-
-    // comer fruta
     const fi = fruits.findIndex(f => f.x === head.x && f.y === head.y)
-    if (fi !== -1) {
-      scores[i]++
-      fruits.splice(fi, 1)
-      spawnFruit(rng)
-    } else {
-      s.body.pop()
-    }
+    if (fi !== -1) { scores[i]++; fruits.splice(fi, 1); spawnFruit(rng) }
+    else s.body.pop()
   }
 
   tick++
-
-  // enviar input propio
-  const myIdx = isHost ? 0 : 1
   sendInput({ dir: nextDir[myIdx] })
+  if (tick % HASH_IV === 0) sendHash({ h: stateHash(tick), t: tick })
 
-  // hash check periodico
-  if (tick % HASH_INT === 0) {
-    sendHash({ h: stateHash(tick), t: tick })
-  }
-
-  // actualizar HUD
-  const [s0, s1] = isHost ? scores : [scores[1], scores[0]]
-  elS1.textContent = s0
-  elS2.textContent = s1
-
+  elS1.textContent = scores[myIdx]
+  elS2.textContent = scores[1 - myIdx]
   render()
 
-  // fin de partida
   if (!snakes[0].alive || !snakes[1].alive) {
-    clearInterval(gameLoop)
-    gameLoop = null
-
-    const myIdx2 = isHost ? 0 : 1
-    const iWon = snakes[myIdx2].alive || (!snakes[0].alive && !snakes[1].alive ? false : snakes[myIdx2].alive)
-    const tie   = !snakes[0].alive && !snakes[1].alive
-
-    setTimeout(() => showGameOver(tie ? null : iWon), 500)
+    clearInterval(loopId); loopId = null
+    const tie = !snakes[0].alive && !snakes[1].alive
+    setTimeout(() => showEnd(tie ? null : snakes[myIdx].alive), 400)
   }
 }
 
-// ── Helpers ──────────────────────────────────────────────────────────────────
 function spawnFruit(rng) {
-  let pos, tries = 0
-  do {
-    pos = { x: rngInt(rng, COLS), y: rngInt(rng, ROWS) }
-    tries++
-  } while (tries < 20 && (
-    snakes.some(s => s.body.some(c => c.x === pos.x && c.y === pos.y)) ||
-    fruits.some(f => f.x === pos.x && f.y === pos.y)
+  let p, t = 0
+  do { p = { x: rngInt(rng, COLS), y: rngInt(rng, ROWS) }
+  } while (++t < 20 && (
+    snakes.some(s => s.body.some(c => c.x === p.x && c.y === p.y)) ||
+    fruits.some(f => f.x === p.x && f.y === p.y)
   ))
-  fruits.push(pos)
+  fruits.push(p)
 }
 
-function opposite(a, b) {
-  return a.x === -b.x && a.y === -b.y
-}
+const opp = (a, b) => a.x === -b.x && a.y === -b.y
 
 function stateHash(t) {
-  // hash simple del estado del juego
-  const data = JSON.stringify({ snakes: snakes.map(s => s.body), fruits, scores, t })
+  const d = JSON.stringify({ b: snakes.map(s => s.body), f: fruits, s: scores, t })
   let h = 0
-  for (let i = 0; i < data.length; i++) {
-    h = Math.imul(31, h) + data.charCodeAt(i) | 0
-  }
+  for (let i = 0; i < d.length; i++) h = Math.imul(31, h) + d.charCodeAt(i) | 0
   return h >>> 0
 }
 
-// ── Render ───────────────────────────────────────────────────────────────────
-const COLORS = ['#00ff88', '#ff3366']
+// ── Render ────────────────────────────────────────────────────────────────
+const COL = ['#00ffaa', '#ff2d6b']
 
 function render() {
-  ctx.fillStyle = '#0a0a0f'
+  ctx.fillStyle = '#070710'
   ctx.fillRect(0, 0, cv.width, cv.height)
 
-  // grid sutil
-  ctx.strokeStyle = '#12121a'
+  ctx.strokeStyle = '#0e0e1a'
   ctx.lineWidth = .5
-  for (let x = 0; x < COLS; x++) {
-    ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,cv.height); ctx.stroke()
-  }
-  for (let y = 0; y < ROWS; y++) {
-    ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(cv.width,y*CELL); ctx.stroke()
-  }
+  for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,cv.height); ctx.stroke() }
+  for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(cv.width,y*CELL); ctx.stroke() }
 
-  // frutas
-  ctx.fillStyle = '#ffcc00'
+  ctx.fillStyle = '#ffd700'
   for (const f of fruits) {
     ctx.beginPath()
     ctx.arc(f.x*CELL + CELL/2, f.y*CELL + CELL/2, CELL/2 - 2, 0, Math.PI*2)
     ctx.fill()
   }
 
-  // serpientes
   for (let i = 0; i < 2; i++) {
     const s = snakes[i]
-    const col = COLORS[i]
-    ctx.fillStyle = col
     for (let j = 0; j < s.body.length; j++) {
-      const c = s.body[j]
-      const alpha = j === 0 ? 1 : 0.5 + 0.5 * (1 - j / s.body.length)
-      ctx.globalAlpha = alpha
+      const c   = s.body[j]
       const pad = j === 0 ? 1 : 3
-      ctx.fillRect(c.x*CELL+pad, c.y*CELL+pad, CELL-pad*2, CELL-pad*2)
+      ctx.globalAlpha = j === 0 ? 1 : Math.max(0.15, 1 - j / s.body.length)
+      ctx.fillStyle   = COL[i]
+      ctx.fillRect(c.x*CELL + pad, c.y*CELL + pad, CELL - pad*2, CELL - pad*2)
     }
     ctx.globalAlpha = 1
-
-    // cabeza con borde brillante
     if (s.alive) {
-      ctx.strokeStyle = col
-      ctx.lineWidth = 2
-      ctx.shadowColor = col
-      ctx.shadowBlur = 8
-      ctx.strokeRect(s.body[0].x*CELL+1, s.body[0].y*CELL+1, CELL-2, CELL-2)
-      ctx.shadowBlur = 0
+      ctx.strokeStyle = COL[i]
+      ctx.lineWidth   = 2
+      ctx.shadowColor = COL[i]
+      ctx.shadowBlur  = 10
+      ctx.strokeRect(s.body[0].x*CELL + 1, s.body[0].y*CELL + 1, CELL - 2, CELL - 2)
+      ctx.shadowBlur  = 0
     }
   }
 }
 
-// ── UI ───────────────────────────────────────────────────────────────────────
-function showGameOver(won) {
-  gameScreen.classList.add('hidden')
-  gameOver.classList.remove('hidden')
+// ── UI ────────────────────────────────────────────────────────────────────
+function showEnd(won, msg) {
+  gScreen.classList.add('hidden')
+  gOver.classList.remove('hidden')
+  gOver.classList.remove('win')
 
-  if (won === null) {
-    elGoTitle.textContent = 'DRAW'
-    gameOver.classList.remove('win')
-  } else if (won) {
-    elGoTitle.textContent = 'YOU WIN'
-    gameOver.classList.add('win')
-  } else {
-    elGoTitle.textContent = 'YOU LOSE'
-    gameOver.classList.remove('win')
-  }
+  if (msg)       { elGoT.textContent = msg;       }
+  else if (won === null) { elGoT.textContent = 'DRAW'; }
+  else if (won)  { elGoT.textContent = 'YOU WIN'; gOver.classList.add('win') }
+  else           { elGoT.textContent = 'YOU LOSE'; }
 
-  elGoMsg.textContent = `Score: ${isHost ? scores[0] : scores[1]}`
+  elGoM.textContent = `Score: ${scores?.[myIdx] ?? 0}`
 }
 
 function resetToLobby() {
-  peerId = null
-  snakes = null
-  if (gameLoop) { clearInterval(gameLoop); gameLoop = null }
-  gameOver.classList.add('hidden')
-  elSearching.classList.add('hidden')
+  if (loopId) { clearInterval(loopId); loopId = null }
+  try { room?.leave() } catch(e) {}
+  peerId = null; snakes = null
+  gOver.classList.add('hidden')
+  elSrch.classList.add('hidden')
   lobby.classList.remove('hidden')
-  elStatus.textContent = 'Network ready'
+  elSt.textContent = 'Network ready'
   btnFind.disabled = false
-  connectLobby()
+  setupRoom()
 }
 
-// ── Input teclado ─────────────────────────────────────────────────────────────
+// ── Input teclado ─────────────────────────────────────────────────────────
 const DIRS = {
-  ArrowUp:    {x:0,  y:-1},
-  ArrowDown:  {x:0,  y:1},
-  ArrowLeft:  {x:-1, y:0},
-  ArrowRight: {x:1,  y:0},
-  w: {x:0,y:-1}, s: {x:0,y:1}, a: {x:-1,y:0}, d: {x:1,y:0}
+  ArrowUp:    {x:0,y:-1}, ArrowDown: {x:0,y:1},
+  ArrowLeft:  {x:-1,y:0}, ArrowRight:{x:1,y:0},
+  w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0}
 }
 
 document.addEventListener('keydown', e => {
-  if (!snakes) return
+  if (!snakes || myIdx === undefined) return
   const d = DIRS[e.key]
   if (!d) return
-  const myIdx = isHost ? 0 : 1
-  if (!opposite(d, nextDir[myIdx])) nextDir[myIdx] = d
+  if (!opp(d, nextDir[myIdx])) nextDir[myIdx] = d
   e.preventDefault()
 })
 
-// ── Botones ──────────────────────────────────────────────────────────────────
-btnFind.addEventListener('click', () => {
-  btnFind.disabled = true
-  elSearching.classList.remove('hidden')
-  elStatus.textContent = 'Searching...'
+// ── Botones tactiles ──────────────────────────────────────────────────────
+const DMAP = {
+  up:    {x:0,y:-1}, down:  {x:0,y:1},
+  left:  {x:-1,y:0}, right: {x:1,y:0}
+}
+
+document.querySelectorAll('.dp').forEach(btn => {
+  const fire = () => {
+    if (!snakes || myIdx === undefined) return
+    const d = DMAP[btn.dataset.dir]
+    if (d && !opp(d, nextDir[myIdx])) nextDir[myIdx] = d
+  }
+  btn.addEventListener('touchstart', e => { e.preventDefault(); fire() }, { passive: false })
+  btn.addEventListener('mousedown', fire)
 })
 
-btnReplay.addEventListener('click', resetToLobby)
+// ── Botones ───────────────────────────────────────────────────────────────
+btnFind.addEventListener('click', () => {
+  btnFind.disabled = true
+  elSrch.classList.remove('hidden')
+  elSt.textContent = 'Searching...'
+})
 
-// ── Boot ──────────────────────────────────────────────────────────────────────
-connectLobby()
+btnRply.addEventListener('click', resetToLobby)
+
+// ── Boot ──────────────────────────────────────────────────────────────────
+setupRoom()
+elSt.textContent = 'Network ready'
+btnFind.disabled = false
