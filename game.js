@@ -54,7 +54,7 @@ const rng32 = s => () => {
 const rngInt = (r, n) => Math.floor(r() * n)
 
 // ── Trystero ──────────────────────────────────────────────────────────────
-function setupRoom() {
+function joinLobby() {
   room = joinRoom(CFG, ROOM)
 
   const a0 = room.makeAction('input')
@@ -236,9 +236,8 @@ function resetToLobby() {
   gOver.classList.add('hidden')
   elSrch.classList.add('hidden')
   lobby.classList.remove('hidden')
-  elSt.textContent = 'Network ready'
+  elSt.textContent = 'Press Find Match'
   btnFind.disabled = false
-  setupRoom()
 }
 
 // ── Input teclado ─────────────────────────────────────────────────────────
@@ -277,11 +276,10 @@ btnFind.addEventListener('click', () => {
   btnFind.disabled = true
   elSrch.classList.remove('hidden')
   elSt.textContent = 'Searching...'
+  joinLobby()
 })
 
 btnRply.addEventListener('click', resetToLobby)
 
 // ── Boot ──────────────────────────────────────────────────────────────────
-setupRoom()
-elSt.textContent = 'Network ready'
-btnFind.disabled = false
+elSt.textContent = 'Press Find Match'
