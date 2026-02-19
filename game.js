@@ -1,64 +1,84 @@
 import { joinRoom, selfId } from 'https://esm.run/trystero@0.20.1'
 
-const ES = navigator.language?.toLowerCase().startsWith('es')
+// ── i18n ──────────────────────────────────────────────────────────────────
+const lang = navigator.language?.toLowerCase().startsWith('es') ? 'es' : 'en'
+const T    = await fetch(`${lang}.json`).then(r => r.json())
+  .catch(() => fetch('en.json').then(r => r.json()))
 
-const T = {
-  findMatch:    ES ? 'BUSCAR PARTIDA'      : 'FIND MATCH',
-  searching:    ES ? 'Buscando rival...'   : 'Searching opponent...',
-  found:        ES ? 'Rival encontrado!'   : 'Opponent found!',
-  disconnected: ES ? 'Rival desconectado'  : 'Opponent disconnected',
-  pressFind:    ES ? 'Presiona Buscar'     : 'Press Find Match',
-  youWin:       ES ? 'GANASTE'             : 'YOU WIN',
-  youLose:      ES ? 'PERDISTE'            : 'YOU LOSE',
-  draw:         ES ? 'EMPATE'              : 'DRAW',
-  score:        ES ? 'Puntaje'             : 'Score',
-  you:          ES ? 'TU'                  : 'YOU',
-  rival:        ES ? 'RIVAL'               : 'RIVAL',
-  muteTitle:    ES ? 'Silenciar micro'     : 'Mute mic',
-  peerTitle:    ES ? 'Silenciar rival'     : 'Mute rival',
-  newMatch:     ES ? 'NUEVA PARTIDA'       : 'FIND NEW MATCH',
-}
-
+// ── Config ────────────────────────────────────────────────────────────────
 const CFG     = { appId: 'snake-p2p-game-v1', relayRedundancy: 2 }
-const ROOM    = 'snake-public-lobby-v1'
+const LOBBY   = 'snake-public-lobby-v1'
 const COLS    = 30
 const ROWS    = 30
 const TICK_MS = 120
 const HASH_IV = 30
 
+// ── State ─────────────────────────────────────────────────────────────────
 let room, sendInput, getInput, sendInit, getInit, sendHash, getHash
 let peerId, isHost, myIdx
 let tick = 0, loopId = null, seed
 let snakes, fruits, scores, nextDir
-
-// voz
 let localStream = null
 let peerAudio   = null
 let micMuted    = false
 let peerMuted   = false
 
-const $          = id => document.getElementById(id)
-const lobby      = $('lobby')
-const gScreen    = $('game-screen')
-const gOver      = $('gameover')
-const cv         = $('cv')
-const ctx        = cv.getContext('2d')
-const elSt       = $('status')
-const elSrch     = $('searching')
-const btnFind    = $('btn-find')
-const btnRply    = $('btn-replay')
-const elS1       = $('score-p1')
-const elS2       = $('score-p2')
-const elSync     = $('sync-status')
-const elGoT      = $('go-title')
-const elGoM      = $('go-msg')
+// ── DOM ───────────────────────────────────────────────────────────────────
+const $           = id => document.getElementById(id)
+const lobby       = $('lobby')
+const gScreen     = $('game-screen')
+const gOver       = $('gameover')
+const cv          = $('cv')
+const ctx         = cv.getContext('2d')
+const elSt        = $('status')
+const elSrch      = $('searching')
+const btnFind     = $('btn-find')
+const btnRply     = $('btn-replay')
+const elS1        = $('score-p1')
+const elS2        = $('score-p2')
+const elSync      = $('sync-status')
+const elGoT       = $('go-title')
+const elGoM       = $('go-msg')
 const btnMuteSelf = $('btn-mute-self')
 const btnMutePeer = $('btn-mute-peer')
 
-// ── Microfono — pedir al cargar ───────────────────────────────────────────
+// Aplicar i18n al HTML
+btnFind.textContent         = T.findMatch
+$('txt-searching').textContent = T.searching
+$('lbl-you').textContent    = T.you
+$('lbl-rival').textContent  = T.rival
+btnRply.textContent         = T.newMatch
+btnMuteSelf.title           = T.muteMe
+btnMutePeer.title           = T.mutePeer
+elSt.textContent            = T.pressFind
+
+// ── Canvas sizing ─────────────────────────────────────────────────────────
+let CELL = 18
+
+function resizeCanvas() {
+  const hud  = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hud-h'))  || 44
+  const dpad = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--dpad-h')) || 160
+  CELL = Math.floor(Math.min(window.innerWidth / COLS, (window.innerHeight - hud - dpad - 2) / ROWS))
+  cv.width  = COLS * CELL
+  cv.height = ROWS * CELL
+}
+
+resizeCanvas()
+window.addEventListener('resize', () => { resizeCanvas(); if (snakes) render() })
+
+// ── RNG determinista ──────────────────────────────────────────────────────
+const rng32  = s => () => {
+  s = s + 0x6d2b79f5 | 0
+  let t = Math.imul(s ^ s >>> 15, 1 | s)
+  t ^= t + Math.imul(t ^ t >>> 7, 61 | t)
+  return ((t ^ t >>> 14) >>> 0) / 4294967296
+}
+const rngInt = (r, n) => Math.floor(r() * n)
+const opp    = (a, b) => a.x === -b.x && a.y === -b.y
+
+// ── Voz ───────────────────────────────────────────────────────────────────
 async function initMic() {
   try {
-    // solo verificar permiso — stream real se crea al iniciar partida
     const test = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
     test.getTracks().forEach(t => t.stop())
     localStream = 'granted'
@@ -78,7 +98,16 @@ async function startVoice() {
 
   if (localStream === 'granted') {
     try {
-      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      // Supresion de eco, cancelacion de ruido y AGC nativos del navegador
+      localStream = await navigator.mediaDevices.getUserMedia({
+        audio: {
+          echoCancellation:     true,
+          noiseSuppression:     true,
+          autoGainControl:      true,
+          suppressLocalAudioPlayback: true
+        },
+        video: false
+      })
       room.addStream(localStream)
     } catch(e) {
       localStream = null
@@ -88,10 +117,10 @@ async function startVoice() {
   room.onPeerStream((stream, fromId) => {
     if (fromId === selfId) return
     if (peerAudio) { peerAudio.srcObject = null }
-    peerAudio = new Audio()
+    peerAudio           = new Audio()
     peerAudio.srcObject = stream
     peerAudio.autoplay  = true
-    peerAudio.muted     = false
+    peerAudio.muted     = peerMuted
   })
 }
 
@@ -103,41 +132,13 @@ function stopVoice() {
   if (peerAudio) { peerAudio.srcObject = null; peerAudio = null }
 }
 
-// ── Canvas sizing ─────────────────────────────────────────────────────────
-let CELL = 18
-
-function resizeCanvas() {
-  const hud  = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hud-h'))  || 44
-  const dpad = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--dpad-h')) || 160
-  const avW  = window.innerWidth
-  const avH  = window.innerHeight - hud - dpad - 2
-  CELL = Math.floor(Math.min(avW / COLS, avH / ROWS))
-  cv.width  = COLS * CELL
-  cv.height = ROWS * CELL
-}
-
-resizeCanvas()
-window.addEventListener('resize', () => { resizeCanvas(); if (snakes) render() })
-
-// ── RNG determinista ──────────────────────────────────────────────────────
-const rng32  = s => () => {
-  s = s + 0x6d2b79f5 | 0
-  let t = Math.imul(s ^ s >>> 15, 1 | s)
-  t ^= t + Math.imul(t ^ t >>> 7, 61 | t)
-  return ((t ^ t >>> 14) >>> 0) / 4294967296
-}
-const rngInt = (r, n) => Math.floor(r() * n)
-
 // ── Trystero ──────────────────────────────────────────────────────────────
 function joinLobby() {
-  room = joinRoom(CFG, ROOM)
+  room = joinRoom(CFG, LOBBY)
 
-  const a0 = room.makeAction('input')
-  const a1 = room.makeAction('init')
-  const a2 = room.makeAction('hash')
-  ;[sendInput, getInput] = a0
-  ;[sendInit,  getInit]  = a1
-  ;[sendHash,  getHash]  = a2
+  ;[sendInput, getInput] = room.makeAction('input')
+  ;[sendInit,  getInit]  = room.makeAction('init')
+  ;[sendHash,  getHash]  = room.makeAction('hash')
 
   getInit(({ seed: s, hostId }) => {
     if (peerId && peerId !== hostId) return
@@ -185,11 +186,11 @@ function startGame() {
   tick = 0
   const rng = rng32(seed)
   snakes = [
-    { body: [{x:5,y:14},{x:4,y:14},{x:3,y:14}], alive: true },
+    { body: [{x:5,y:14},{x:4,y:14},{x:3,y:14}],   alive: true },
     { body: [{x:24,y:15},{x:25,y:15},{x:26,y:15}], alive: true }
   ]
-  nextDir = [{x:1,y:0},{x:-1,y:0}]
-  scores  = [0,0]
+  nextDir = [{x:1,y:0}, {x:-1,y:0}]
+  scores  = [0, 0]
   fruits  = []
   for (let i = 0; i < 3; i++) spawnFruit(rng)
 
@@ -199,9 +200,11 @@ function startGame() {
   resizeCanvas()
   startVoice()
 
+  // Countdown 3-2-1 antes de iniciar loop
   let cd = 3
   render()
   drawCountdown(cd)
+
   const cdId = setInterval(() => {
     cd--
     render()
@@ -252,31 +255,11 @@ function spawnFruit(rng) {
   fruits.push(p)
 }
 
-const opp = (a, b) => a.x === -b.x && a.y === -b.y
-
 function stateHash(t) {
   const d = JSON.stringify({ b: snakes.map(s => s.body), f: fruits, s: scores, t })
   let h = 0
   for (let i = 0; i < d.length; i++) h = Math.imul(31, h) + d.charCodeAt(i) | 0
   return h >>> 0
-}
-
-// ── Countdown ────────────────────────────────────────────────────────────
-function drawCountdown(n) {
-  const cx = cv.width / 2
-  const cy = cv.height / 2
-  const r  = CELL * 2.5
-  ctx.save()
-  ctx.fillStyle   = '#070710cc'
-  ctx.fillRect(cx - r, cy - r, r*2, r*2)
-  ctx.font        = `bold ${CELL * 3}px "Orbitron", monospace`
-  ctx.textAlign   = 'center'
-  ctx.textBaseline = 'middle'
-  ctx.fillStyle   = '#00ffaa'
-  ctx.shadowColor = '#00ffaa'
-  ctx.shadowBlur  = 20
-  ctx.fillText(n, cx, cy)
-  ctx.restore()
 }
 
 // ── Render ────────────────────────────────────────────────────────────────
@@ -319,6 +302,25 @@ function render() {
   }
 }
 
+function drawCountdown(n) {
+  const cx = cv.width / 2
+  const cy = cv.height / 2
+  const r  = CELL * 3
+  ctx.save()
+  ctx.fillStyle = '#070710cc'
+  ctx.beginPath()
+  ctx.arc(cx, cy, r, 0, Math.PI * 2)
+  ctx.fill()
+  ctx.font             = `bold ${CELL * 3}px "Orbitron", monospace`
+  ctx.textAlign        = 'center'
+  ctx.textBaseline     = 'middle'
+  ctx.fillStyle        = '#00ffaa'
+  ctx.shadowColor      = '#00ffaa'
+  ctx.shadowBlur       = 24
+  ctx.fillText(n, cx, cy)
+  ctx.restore()
+}
+
 // ── UI ────────────────────────────────────────────────────────────────────
 function showEnd(won, msg) {
   stopVoice()
@@ -326,10 +328,10 @@ function showEnd(won, msg) {
   gOver.classList.remove('hidden')
   gOver.classList.remove('win')
 
-  if (msg)            elGoT.textContent = msg
+  if (msg)              elGoT.textContent = msg
   else if (won === null) elGoT.textContent = T.draw
-  else if (won)       { elGoT.textContent = T.youWin;  gOver.classList.add('win') }
-  else                  elGoT.textContent = T.youLose
+  else if (won)        { elGoT.textContent = T.youWin;  gOver.classList.add('win') }
+  else                   elGoT.textContent = T.youLose
 
   elGoM.textContent = `${T.score}: ${scores?.[myIdx] ?? 0}`
 }
@@ -342,13 +344,13 @@ function resetToLobby() {
   gOver.classList.add('hidden')
   elSrch.classList.add('hidden')
   lobby.classList.remove('hidden')
-  elSt.textContent = T.pressFind
-  btnFind.disabled = false
+  elSt.textContent  = T.pressFind
+  btnFind.disabled  = false
 }
 
 // ── Botones voz ───────────────────────────────────────────────────────────
 btnMuteSelf.addEventListener('click', () => {
-  if (!localStream) return
+  if (!localStream || localStream === 'granted') return
   micMuted = !micMuted
   localStream.getAudioTracks().forEach(t => t.enabled = !micMuted)
   btnMuteSelf.classList.toggle('muted', micMuted)
@@ -377,7 +379,7 @@ document.addEventListener('keydown', e => {
   e.preventDefault()
 })
 
-// ── Botones tactiles ──────────────────────────────────────────────────────
+// ── D-pad tactil ──────────────────────────────────────────────────────────
 const DMAP = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} }
 
 document.querySelectorAll('.dp').forEach(btn => {
@@ -401,15 +403,5 @@ btnFind.addEventListener('click', () => {
 btnRply.addEventListener('click', resetToLobby)
 
 // ── Boot ──────────────────────────────────────────────────────────────────
-// Aplicar i18n al HTML
-btnFind.textContent                          = T.findMatch
-$('txt-searching').textContent               = T.searching
-$('lbl-you').textContent                     = T.you
-$('lbl-rival').textContent                   = T.rival
-btnRply.textContent                          = T.newMatch
-btnMuteSelf.title                            = T.muteTitle
-btnMutePeer.title                            = T.peerTitle
-
 initMic()
-elSt.textContent = T.pressFind
 btnFind.disabled = false
