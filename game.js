@@ -85,8 +85,8 @@ if(!room)return
 mm=pm=false
 btnMuteSelf.classList.remove("muted")
 btnMutePeer.classList.remove("muted")
-btnMuteSelf.textContent="🎤"
-btnMutePeer.textContent="🔊"
+btnMutePeer.textContent="🔊👆"
+btnMuteSelf.textContent="🫵🎤"
 if(ls===1)try{
 ls=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:1,noiseSuppression:1,autoGainControl:1},video:0})
 room.addStream(ls)
@@ -112,13 +112,13 @@ if(!ls||ls===1)return
 mm=!mm
 ls.getAudioTracks().forEach(t=>t.enabled=!mm)
 btnMuteSelf.classList.toggle("muted",mm)
-btnMuteSelf.textContent=mm?"🔇":"🎤"
+btnMuteSelf.textContent=mm?"🤫":"🎤"
 }
 btnMutePeer.onclick=()=>{
 pm=!pm
 if(ra)ra.muted=pm
 btnMutePeer.classList.toggle("muted",pm)
-btnMutePeer.textContent=pm?"🔈":"🔊"
+btnMutePeer.textContent=pm?"🔇":"🔊"
 }
 
 // ── Trystero ──────────────────────────────────────────────────────────────
