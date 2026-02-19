@@ -12,30 +12,78 @@ let peerId, isHost, myIdx
 let tick = 0, loopId = null, seed
 let snakes, fruits, scores, nextDir
 
-const $       = id => document.getElementById(id)
-const lobby   = $('lobby')
-const gScreen = $('game-screen')
-const gOver   = $('gameover')
-const cv      = $('cv')
-const ctx     = cv.getContext('2d')
-const elSt    = $('status')
-const elSrch  = $('searching')
-const btnFind = $('btn-find')
-const btnRply = $('btn-replay')
-const elS1    = $('score-p1')
-const elS2    = $('score-p2')
-const elSync  = $('sync-status')
-const elGoT   = $('go-title')
-const elGoM   = $('go-msg')
+// voz
+let localStream = null
+let peerAudio   = null
+let micMuted    = false
+let peerMuted   = false
 
-// ── Canvas sizing ─────────────────────────────────────────────────────────
+const $          = id => document.getElementById(id)
+const lobby      = $('lobby')
+const gScreen    = $('game-screen')
+const gOver      = $('gameover')
+const cv         = $('cv')
+const ctx        = cv.getContext('2d')
+const elSt       = $('status')
+const elSrch     = $('searching')
+const btnFind    = $('btn-find')
+const btnRply    = $('btn-replay')
+const elS1       = $('score-p1')
+const elS2       = $('score-p2')
+const elSync     = $('sync-status')
+const elGoT      = $('go-title')
+const elGoM      = $('go-msg')
+const btnMuteSelf = $('btn-mute-self')
+const btnMutePeer = $('btn-mute-peer')
+
+// ── Microfono — pedir al cargar ─────
+async function initMic() {
+  try {
+    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    // silenciar hasta que empiece partida — no transmitir en lobby
+    localStream.getAudioTracks().forEach(t => t.enabled = false)
+  } catch(e) {
+    // sin micro — voz deshabilitada silenciosamente
+    localStream = null
+  }
+}
+
+function startVoice() {
+  if (!room) return
+  micMuted  = false
+  peerMuted = false
+  btnMuteSelf.classList.remove('muted')
+  btnMutePeer.classList.remove('muted')
+  btnMuteSelf.textContent = '🎤'
+  btnMutePeer.textContent = '🔊'
+
+  if (localStream) {
+    localStream.getAudioTracks().forEach(t => t.enabled = true)
+    room.addStream(localStream)
+  }
+
+  room.onPeerStream((stream) => {
+    if (peerAudio) { peerAudio.srcObject = null }
+    peerAudio = new Audio()
+    peerAudio.srcObject = stream
+    peerAudio.autoplay  = true
+    peerAudio.muted     = false
+  })
+}
+
+function stopVoice() {
+  if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = false)
+  if (peerAudio)  { peerAudio.srcObject = null; peerAudio = null }
+}
+
+// ── Canvas sizing
 let CELL = 18
 
 function resizeCanvas() {
-  const hud   = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hud-h'))  || 44
-  const dpad  = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--dpad-h')) || 160
-  const avW   = window.innerWidth
-  const avH   = window.innerHeight - hud - dpad - 2
+  const hud  = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--hud-h'))  || 44
+  const dpad = parseInt(getComputedStyle(document.documentElement).getPropertyValue('--dpad-h')) || 160
+  const avW  = window.innerWidth
+  const avH  = window.innerHeight - hud - dpad - 2
   CELL = Math.floor(Math.min(avW / COLS, avH / ROWS))
   cv.width  = COLS * CELL
   cv.height = ROWS * CELL
@@ -44,8 +92,8 @@ function resizeCanvas() {
 resizeCanvas()
 window.addEventListener('resize', () => { resizeCanvas(); if (snakes) render() })
 
-// ── RNG determinista ──────────────────────────────────────────────────────
-const rng32 = s => () => {
+// ── RNG determinista
+const rng32  = s => () => {
   s = s + 0x6d2b79f5 | 0
   let t = Math.imul(s ^ s >>> 15, 1 | s)
   t ^= t + Math.imul(t ^ t >>> 7, 61 | t)
@@ -53,7 +101,7 @@ const rng32 = s => () => {
 }
 const rngInt = (r, n) => Math.floor(r() * n)
 
-// ── Trystero ──────────────────────────────────────────────────────────────
+// ── Trystero─────
 function joinLobby() {
   room = joinRoom(CFG, ROOM)
 
@@ -68,7 +116,7 @@ function joinLobby() {
     if (peerId && peerId !== hostId) return
     if (!peerId) peerId = hostId
     isHost = false
-    seed = s
+    seed   = s
     startGame()
   })
 
@@ -100,11 +148,12 @@ function joinLobby() {
   room.onPeerLeave(id => {
     if (id !== peerId) return
     if (loopId) { clearInterval(loopId); loopId = null }
+    stopVoice()
     showEnd(null, 'Opponent disconnected')
   })
 }
 
-// ── Game ──────────────────────────────────────────────────────────────────
+// ── Game─────────
 function startGame() {
   tick = 0
   const rng = rng32(seed)
@@ -121,6 +170,7 @@ function startGame() {
   gOver.classList.add('hidden')
   gScreen.classList.remove('hidden')
   resizeCanvas()
+  startVoice()
 
   loopId = setInterval(() => gameTick(rng), TICK_MS)
 }
@@ -175,7 +225,7 @@ function stateHash(t) {
   return h >>> 0
 }
 
-// ── Render ────────────────────────────────────────────────────────────────
+// ── Render───────
 const COL = ['#00ffaa', '#ff2d6b']
 
 function render() {
@@ -183,7 +233,7 @@ function render() {
   ctx.fillRect(0, 0, cv.width, cv.height)
 
   ctx.strokeStyle = '#0e0e1a'
-  ctx.lineWidth = .5
+  ctx.lineWidth   = .5
   for (let x = 0; x <= COLS; x++) { ctx.beginPath(); ctx.moveTo(x*CELL,0); ctx.lineTo(x*CELL,cv.height); ctx.stroke() }
   for (let y = 0; y <= ROWS; y++) { ctx.beginPath(); ctx.moveTo(0,y*CELL); ctx.lineTo(cv.width,y*CELL); ctx.stroke() }
 
@@ -215,24 +265,26 @@ function render() {
   }
 }
 
-// ── UI ────────────────────────────────────────────────────────────────────
+// ── UI───────────
 function showEnd(won, msg) {
+  stopVoice()
   gScreen.classList.add('hidden')
   gOver.classList.remove('hidden')
   gOver.classList.remove('win')
 
-  if (msg)       { elGoT.textContent = msg;       }
-  else if (won === null) { elGoT.textContent = 'DRAW'; }
-  else if (won)  { elGoT.textContent = 'YOU WIN'; gOver.classList.add('win') }
-  else           { elGoT.textContent = 'YOU LOSE'; }
+  if (msg)            elGoT.textContent = msg
+  else if (won === null) elGoT.textContent = 'DRAW'
+  else if (won)       { elGoT.textContent = 'YOU WIN';  gOver.classList.add('win') }
+  else                  elGoT.textContent = 'YOU LOSE'
 
   elGoM.textContent = `Score: ${scores?.[myIdx] ?? 0}`
 }
 
 function resetToLobby() {
   if (loopId) { clearInterval(loopId); loopId = null }
+  stopVoice()
   try { room?.leave() } catch(e) {}
-  peerId = null; snakes = null
+  room = null; peerId = null; snakes = null
   gOver.classList.add('hidden')
   elSrch.classList.add('hidden')
   lobby.classList.remove('hidden')
@@ -240,10 +292,26 @@ function resetToLobby() {
   btnFind.disabled = false
 }
 
-// ── Input teclado ─────────────────────────────────────────────────────────
+// ── Botones voz──
+btnMuteSelf.addEventListener('click', () => {
+  if (!localStream) return
+  micMuted = !micMuted
+  localStream.getAudioTracks().forEach(t => t.enabled = !micMuted)
+  btnMuteSelf.classList.toggle('muted', micMuted)
+  btnMuteSelf.textContent = micMuted ? '🔇' : '🎤'
+})
+
+btnMutePeer.addEventListener('click', () => {
+  peerMuted = !peerMuted
+  if (peerAudio) peerAudio.muted = peerMuted
+  btnMutePeer.classList.toggle('muted', peerMuted)
+  btnMutePeer.textContent = peerMuted ? '🔈' : '🔊'
+})
+
+// ── Input teclado
 const DIRS = {
-  ArrowUp:    {x:0,y:-1}, ArrowDown: {x:0,y:1},
-  ArrowLeft:  {x:-1,y:0}, ArrowRight:{x:1,y:0},
+  ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1},
+  ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
   w:{x:0,y:-1}, s:{x:0,y:1}, a:{x:-1,y:0}, d:{x:1,y:0}
 }
 
@@ -255,11 +323,8 @@ document.addEventListener('keydown', e => {
   e.preventDefault()
 })
 
-// ── Botones tactiles ──────────────────────────────────────────────────────
-const DMAP = {
-  up:    {x:0,y:-1}, down:  {x:0,y:1},
-  left:  {x:-1,y:0}, right: {x:1,y:0}
-}
+// ── Botones tactiles
+const DMAP = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} }
 
 document.querySelectorAll('.dp').forEach(btn => {
   const fire = () => {
@@ -271,7 +336,7 @@ document.querySelectorAll('.dp').forEach(btn => {
   btn.addEventListener('mousedown', fire)
 })
 
-// ── Botones ───────────────────────────────────────────────────────────────
+// ── Botones UI───
 btnFind.addEventListener('click', () => {
   btnFind.disabled = true
   elSrch.classList.remove('hidden')
@@ -281,6 +346,7 @@ btnFind.addEventListener('click', () => {
 
 btnRply.addEventListener('click', resetToLobby)
 
-// ── Boot ──────────────────────────────────────────────────────────────────
+// ── Boot─────────
+initMic()
 elSt.textContent = 'Press Find Match'
 btnFind.disabled = false

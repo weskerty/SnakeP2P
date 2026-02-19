@@ -245,3 +245,42 @@ h2 {
 
 /* ── UTIL ────────────────────────────────────────────────────────────────── */
 .hidden { display: none !important; }
+
+/* ── VOICE ───────────────────────────────────────────────────────────────── */
+#dpad {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 1.2rem;
+}
+
+#voice-btns {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.vbtn {
+  font-family: inherit;
+  font-size: 1.2rem;
+  width: 48px;
+  height: 48px;
+  border-radius: 50%;
+  border: 2px solid var(--p1);
+  background: #00ffaa18;
+  color: var(--text);
+  cursor: pointer;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  padding: 0;
+  transition: background .15s, border-color .15s, opacity .15s;
+  touch-action: manipulation;
+  letter-spacing: 0;
+}
+.vbtn.muted {
+  border-color: var(--p2);
+  background: #ff2d6b18;
+  opacity: .7;
+}
+.vbtn:active { transform: scale(.9); }
