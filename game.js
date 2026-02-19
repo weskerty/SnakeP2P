@@ -78,61 +78,47 @@ const rngInt = (r, n) => Math.floor(r() * n)
 const opp    = (a, b) => a.x === -b.x && a.y === -b.y
 
 // ── Voz ───────────────────────────────────────────────────────────────────
-async function initMic() {
-  try {
-    const test = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    test.getTracks().forEach(t => t.stop())
-    localStream = 'granted'
-  } catch(e) {
-    localStream = null
-  }
+let ls=null,ra=null,mm=false,pm=false
+async function initMic(){try{const s=await navigator.mediaDevices.getUserMedia({audio:1});s.getTracks().forEach(t=>t.stop());ls=1}catch(e){ls=null}}
+async function startVoice(){
+if(!room)return
+mm=pm=false
+btnMuteSelf.classList.remove("muted")
+btnMutePeer.classList.remove("muted")
+btnMuteSelf.textContent="🎤"
+btnMutePeer.textContent="🔊"
+if(ls===1)try{
+ls=await navigator.mediaDevices.getUserMedia({audio:{echoCancellation:1,noiseSuppression:1,autoGainControl:1},video:0})
+room.addStream(ls)
+}catch(e){ls=null}
+room.onPeerStream((s,id)=>{
+if(id===selfId)return
+if(ra){ra.pause();ra.srcObject=null;ra.remove()}
+ra=document.createElement("audio")
+ra.srcObject=s
+ra.autoplay=1
+ra.playsInline=1
+ra.volume=.6
+ra.muted=pm
+document.body.appendChild(ra)
+})
 }
-
-async function startVoice() {
-  if (!room) return
-  micMuted  = false
-  peerMuted = false
-  btnMuteSelf.classList.remove('muted')
-  btnMutePeer.classList.remove('muted')
-  btnMuteSelf.textContent = '🎤'
-  btnMutePeer.textContent = '🔊'
-
-  if (localStream === 'granted') {
-    try {
-      // Supresion de eco, cancelacion de ruido y AGC nativos del navegador
-      localStream = await navigator.mediaDevices.getUserMedia({
-        audio: {
-          echoCancellation:     true,
-          noiseSuppression:     true,
-          autoGainControl:      true,
-          suppressLocalAudioPlayback: true
-        },
-        video: false
-      })
-      room.addStream(localStream)
-    } catch(e) {
-      localStream = null
-    }
-  }
-
-  room.onPeerStream((stream, fromId) => {
-    if (fromId === selfId) return
-    if (audioCtx) audioCtx.close()
-    audioCtx  = new AudioContext()
-    const src = audioCtx.createMediaStreamSource(stream)
-    peerGain  = audioCtx.createGain()
-    peerGain.gain.value = peerMuted ? 0 : 1
-    src.connect(peerGain)
-    peerGain.connect(audioCtx.destination)
-  })
+function stopVoice(){
+if(ls&&ls!==1){ls.getTracks().forEach(t=>t.stop());ls=1}
+if(ra){ra.pause();ra.srcObject=null;ra.remove();ra=null}
 }
-
-function stopVoice() {
-  if (localStream && localStream !== 'granted') {
-    localStream.getTracks().forEach(t => t.stop())
-    localStream = 'granted'
-  }
-  if (audioCtx)  { audioCtx.close(); audioCtx = null; peerGain = null }
+btnMuteSelf.onclick=()=>{
+if(!ls||ls===1)return
+mm=!mm
+ls.getAudioTracks().forEach(t=>t.enabled=!mm)
+btnMuteSelf.classList.toggle("muted",mm)
+btnMuteSelf.textContent=mm?"🔇":"🎤"
+}
+btnMutePeer.onclick=()=>{
+pm=!pm
+if(ra)ra.muted=pm
+btnMutePeer.classList.toggle("muted",pm)
+btnMutePeer.textContent=pm?"🔈":"🔊"
 }
 
 // ── Trystero ──────────────────────────────────────────────────────────────
