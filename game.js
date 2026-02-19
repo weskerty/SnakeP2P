@@ -19,7 +19,8 @@ let peerId, isHost, myIdx
 let tick = 0, loopId = null, seed
 let snakes, fruits, scores, nextDir
 let localStream = null
-let peerAudio   = null
+let audioCtx    = null
+let peerGain    = null
 let micMuted    = false
 let peerMuted   = false
 
@@ -116,11 +117,13 @@ async function startVoice() {
 
   room.onPeerStream((stream, fromId) => {
     if (fromId === selfId) return
-    if (peerAudio) { peerAudio.srcObject = null }
-    peerAudio           = new Audio()
-    peerAudio.srcObject = stream
-    peerAudio.autoplay  = true
-    peerAudio.muted     = peerMuted
+    if (audioCtx) audioCtx.close()
+    audioCtx  = new AudioContext()
+    const src = audioCtx.createMediaStreamSource(stream)
+    peerGain  = audioCtx.createGain()
+    peerGain.gain.value = peerMuted ? 0 : 1
+    src.connect(peerGain)
+    peerGain.connect(audioCtx.destination)
   })
 }
 
@@ -129,7 +132,7 @@ function stopVoice() {
     localStream.getTracks().forEach(t => t.stop())
     localStream = 'granted'
   }
-  if (peerAudio) { peerAudio.srcObject = null; peerAudio = null }
+  if (audioCtx)  { audioCtx.close(); audioCtx = null; peerGain = null }
 }
 
 // ── Trystero ──────────────────────────────────────────────────────────────
@@ -359,7 +362,7 @@ btnMuteSelf.addEventListener('click', () => {
 
 btnMutePeer.addEventListener('click', () => {
   peerMuted = !peerMuted
-  if (peerAudio) peerAudio.muted = peerMuted
+  if (peerGain)  peerGain.gain.value = peerMuted ? 0 : 1
   btnMutePeer.classList.toggle('muted', peerMuted)
   btnMutePeer.textContent = peerMuted ? '🔈' : '🔊'
 })
