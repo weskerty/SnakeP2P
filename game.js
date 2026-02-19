@@ -1,5 +1,24 @@
 import { joinRoom, selfId } from 'https://esm.run/trystero@0.20.1'
 
+const ES = navigator.language?.toLowerCase().startsWith('es')
+
+const T = {
+  findMatch:    ES ? 'BUSCAR PARTIDA'      : 'FIND MATCH',
+  searching:    ES ? 'Buscando rival...'   : 'Searching opponent...',
+  found:        ES ? 'Rival encontrado!'   : 'Opponent found!',
+  disconnected: ES ? 'Rival desconectado'  : 'Opponent disconnected',
+  pressFind:    ES ? 'Presiona Buscar'     : 'Press Find Match',
+  youWin:       ES ? 'GANASTE'             : 'YOU WIN',
+  youLose:      ES ? 'PERDISTE'            : 'YOU LOSE',
+  draw:         ES ? 'EMPATE'              : 'DRAW',
+  score:        ES ? 'Puntaje'             : 'Score',
+  you:          ES ? 'TU'                  : 'YOU',
+  rival:        ES ? 'RIVAL'               : 'RIVAL',
+  muteTitle:    ES ? 'Silenciar micro'     : 'Mute mic',
+  peerTitle:    ES ? 'Silenciar rival'     : 'Mute rival',
+  newMatch:     ES ? 'NUEVA PARTIDA'       : 'FIND NEW MATCH',
+}
+
 const CFG     = { appId: 'snake-p2p-game-v1', relayRedundancy: 2 }
 const ROOM    = 'snake-public-lobby-v1'
 const COLS    = 30
@@ -143,7 +162,7 @@ function joinLobby() {
   room.onPeerJoin(id => {
     if (peerId) return
     peerId = id
-    elSt.textContent = 'Opponent found!'
+    elSt.textContent = T.found
     isHost = selfId < peerId
     myIdx  = isHost ? 0 : 1
     if (isHost) {
@@ -157,7 +176,7 @@ function joinLobby() {
     if (id !== peerId) return
     if (loopId) { clearInterval(loopId); loopId = null }
     stopVoice()
-    showEnd(null, 'Opponent disconnected')
+    showEnd(null, T.disconnected)
   })
 }
 
@@ -178,9 +197,18 @@ function startGame() {
   gOver.classList.add('hidden')
   gScreen.classList.remove('hidden')
   resizeCanvas()
-  startVoice()  // async, no bloquea
+  startVoice()
 
-  loopId = setInterval(() => gameTick(rng), TICK_MS)
+  let cd = 3
+  render()
+  drawCountdown(cd)
+  const cdId = setInterval(() => {
+    cd--
+    render()
+    if (cd > 0) { drawCountdown(cd); return }
+    clearInterval(cdId)
+    loopId = setInterval(() => gameTick(rng), TICK_MS)
+  }, 1000)
 }
 
 function gameTick(rng) {
@@ -233,6 +261,24 @@ function stateHash(t) {
   return h >>> 0
 }
 
+// ── Countdown ────────────────────────────────────────────────────────────
+function drawCountdown(n) {
+  const cx = cv.width / 2
+  const cy = cv.height / 2
+  const r  = CELL * 2.5
+  ctx.save()
+  ctx.fillStyle   = '#070710cc'
+  ctx.fillRect(cx - r, cy - r, r*2, r*2)
+  ctx.font        = `bold ${CELL * 3}px "Orbitron", monospace`
+  ctx.textAlign   = 'center'
+  ctx.textBaseline = 'middle'
+  ctx.fillStyle   = '#00ffaa'
+  ctx.shadowColor = '#00ffaa'
+  ctx.shadowBlur  = 20
+  ctx.fillText(n, cx, cy)
+  ctx.restore()
+}
+
 // ── Render ────────────────────────────────────────────────────────────────
 const COL = ['#00ffaa', '#ff2d6b']
 
@@ -281,11 +327,11 @@ function showEnd(won, msg) {
   gOver.classList.remove('win')
 
   if (msg)            elGoT.textContent = msg
-  else if (won === null) elGoT.textContent = 'DRAW'
-  else if (won)       { elGoT.textContent = 'YOU WIN';  gOver.classList.add('win') }
-  else                  elGoT.textContent = 'YOU LOSE'
+  else if (won === null) elGoT.textContent = T.draw
+  else if (won)       { elGoT.textContent = T.youWin;  gOver.classList.add('win') }
+  else                  elGoT.textContent = T.youLose
 
-  elGoM.textContent = `Score: ${scores?.[myIdx] ?? 0}`
+  elGoM.textContent = `${T.score}: ${scores?.[myIdx] ?? 0}`
 }
 
 function resetToLobby() {
@@ -296,7 +342,7 @@ function resetToLobby() {
   gOver.classList.add('hidden')
   elSrch.classList.add('hidden')
   lobby.classList.remove('hidden')
-  elSt.textContent = 'Press Find Match'
+  elSt.textContent = T.pressFind
   btnFind.disabled = false
 }
 
@@ -348,13 +394,22 @@ document.querySelectorAll('.dp').forEach(btn => {
 btnFind.addEventListener('click', () => {
   btnFind.disabled = true
   elSrch.classList.remove('hidden')
-  elSt.textContent = 'Searching...'
+  elSt.textContent = T.searching
   joinLobby()
 })
 
 btnRply.addEventListener('click', resetToLobby)
 
 // ── Boot ──────────────────────────────────────────────────────────────────
+// Aplicar i18n al HTML
+btnFind.textContent                          = T.findMatch
+$('txt-searching').textContent               = T.searching
+$('lbl-you').textContent                     = T.you
+$('lbl-rival').textContent                   = T.rival
+btnRply.textContent                          = T.newMatch
+btnMuteSelf.title                            = T.muteTitle
+btnMutePeer.title                            = T.peerTitle
+
 initMic()
-elSt.textContent = 'Press Find Match'
+elSt.textContent = T.pressFind
 btnFind.disabled = false
