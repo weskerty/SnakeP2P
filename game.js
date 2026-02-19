@@ -36,19 +36,19 @@ const elGoM      = $('go-msg')
 const btnMuteSelf = $('btn-mute-self')
 const btnMutePeer = $('btn-mute-peer')
 
-// ── Microfono — pedir al cargar ─────
+// ── Microfono — pedir al cargar ───────────────────────────────────────────
 async function initMic() {
   try {
-    localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
-    // silenciar hasta que empiece partida — no transmitir en lobby
-    localStream.getAudioTracks().forEach(t => t.enabled = false)
+    // solo verificar permiso — stream real se crea al iniciar partida
+    const test = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+    test.getTracks().forEach(t => t.stop())
+    localStream = 'granted'
   } catch(e) {
-    // sin micro — voz deshabilitada silenciosamente
     localStream = null
   }
 }
 
-function startVoice() {
+async function startVoice() {
   if (!room) return
   micMuted  = false
   peerMuted = false
@@ -57,12 +57,17 @@ function startVoice() {
   btnMuteSelf.textContent = '🎤'
   btnMutePeer.textContent = '🔊'
 
-  if (localStream) {
-    localStream.getAudioTracks().forEach(t => t.enabled = true)
-    room.addStream(localStream)
+  if (localStream === 'granted') {
+    try {
+      localStream = await navigator.mediaDevices.getUserMedia({ audio: true, video: false })
+      room.addStream(localStream)
+    } catch(e) {
+      localStream = null
+    }
   }
 
-  room.onPeerStream((stream) => {
+  room.onPeerStream((stream, fromId) => {
+    if (fromId === selfId) return
     if (peerAudio) { peerAudio.srcObject = null }
     peerAudio = new Audio()
     peerAudio.srcObject = stream
@@ -72,11 +77,14 @@ function startVoice() {
 }
 
 function stopVoice() {
-  if (localStream) localStream.getAudioTracks().forEach(t => t.enabled = false)
-  if (peerAudio)  { peerAudio.srcObject = null; peerAudio = null }
+  if (localStream && localStream !== 'granted') {
+    localStream.getTracks().forEach(t => t.stop())
+    localStream = 'granted'
+  }
+  if (peerAudio) { peerAudio.srcObject = null; peerAudio = null }
 }
 
-// ── Canvas sizing
+// ── Canvas sizing ─────────────────────────────────────────────────────────
 let CELL = 18
 
 function resizeCanvas() {
@@ -92,7 +100,7 @@ function resizeCanvas() {
 resizeCanvas()
 window.addEventListener('resize', () => { resizeCanvas(); if (snakes) render() })
 
-// ── RNG determinista
+// ── RNG determinista ──────────────────────────────────────────────────────
 const rng32  = s => () => {
   s = s + 0x6d2b79f5 | 0
   let t = Math.imul(s ^ s >>> 15, 1 | s)
@@ -101,7 +109,7 @@ const rng32  = s => () => {
 }
 const rngInt = (r, n) => Math.floor(r() * n)
 
-// ── Trystero─────
+// ── Trystero ──────────────────────────────────────────────────────────────
 function joinLobby() {
   room = joinRoom(CFG, ROOM)
 
@@ -153,7 +161,7 @@ function joinLobby() {
   })
 }
 
-// ── Game─────────
+// ── Game ──────────────────────────────────────────────────────────────────
 function startGame() {
   tick = 0
   const rng = rng32(seed)
@@ -170,7 +178,7 @@ function startGame() {
   gOver.classList.add('hidden')
   gScreen.classList.remove('hidden')
   resizeCanvas()
-  startVoice()
+  startVoice()  // async, no bloquea
 
   loopId = setInterval(() => gameTick(rng), TICK_MS)
 }
@@ -225,7 +233,7 @@ function stateHash(t) {
   return h >>> 0
 }
 
-// ── Render───────
+// ── Render ────────────────────────────────────────────────────────────────
 const COL = ['#00ffaa', '#ff2d6b']
 
 function render() {
@@ -265,7 +273,7 @@ function render() {
   }
 }
 
-// ── UI───────────
+// ── UI ────────────────────────────────────────────────────────────────────
 function showEnd(won, msg) {
   stopVoice()
   gScreen.classList.add('hidden')
@@ -292,7 +300,7 @@ function resetToLobby() {
   btnFind.disabled = false
 }
 
-// ── Botones voz──
+// ── Botones voz ───────────────────────────────────────────────────────────
 btnMuteSelf.addEventListener('click', () => {
   if (!localStream) return
   micMuted = !micMuted
@@ -308,7 +316,7 @@ btnMutePeer.addEventListener('click', () => {
   btnMutePeer.textContent = peerMuted ? '🔈' : '🔊'
 })
 
-// ── Input teclado
+// ── Input teclado ─────────────────────────────────────────────────────────
 const DIRS = {
   ArrowUp:{x:0,y:-1}, ArrowDown:{x:0,y:1},
   ArrowLeft:{x:-1,y:0}, ArrowRight:{x:1,y:0},
@@ -323,7 +331,7 @@ document.addEventListener('keydown', e => {
   e.preventDefault()
 })
 
-// ── Botones tactiles
+// ── Botones tactiles ──────────────────────────────────────────────────────
 const DMAP = { up:{x:0,y:-1}, down:{x:0,y:1}, left:{x:-1,y:0}, right:{x:1,y:0} }
 
 document.querySelectorAll('.dp').forEach(btn => {
@@ -336,7 +344,7 @@ document.querySelectorAll('.dp').forEach(btn => {
   btn.addEventListener('mousedown', fire)
 })
 
-// ── Botones UI───
+// ── Botones UI ────────────────────────────────────────────────────────────
 btnFind.addEventListener('click', () => {
   btnFind.disabled = true
   elSrch.classList.remove('hidden')
@@ -346,7 +354,7 @@ btnFind.addEventListener('click', () => {
 
 btnRply.addEventListener('click', resetToLobby)
 
-// ── Boot─────────
+// ── Boot ──────────────────────────────────────────────────────────────────
 initMic()
 elSt.textContent = 'Press Find Match'
 btnFind.disabled = false
