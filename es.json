@@ -1,0 +1,17 @@
+{
+  "findMatch":    "BUSCAR PARTIDA",
+  "searching":    "Buscando rival...",
+  "found":        "Rival encontrado!",
+  "disconnected": "Rival desconectado",
+  "pressFind":    "Presiona Buscar Partida",
+  "youWin":       "GANASTE",
+  "youLose":      "PERDISTE",
+  "draw":         "EMPATE",
+  "score":        "Puntaje",
+  "you":          "TU",
+  "rival":        "RIVAL",
+  "muteMe":       "Silenciar micro",
+  "mutePeer":     "Silenciar rival",
+  "newMatch":     "NUEVA PARTIDA",
+  "hacked":       "Hack detectado — partida cancelada"
+}

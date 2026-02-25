@@ -1,0 +1,17 @@
+{
+  "findMatch":    "FIND MATCH",
+  "searching":    "Searching opponent...",
+  "found":        "Opponent found!",
+  "disconnected": "Opponent disconnected",
+  "pressFind":    "Press Find Match",
+  "youWin":       "YOU WIN",
+  "youLose":      "YOU LOSE",
+  "draw":         "DRAW",
+  "score":        "Score",
+  "you":          "YOU",
+  "rival":        "RIVAL",
+  "muteMe":       "Mute mic",
+  "mutePeer":     "Mute rival",
+  "newMatch":     "FIND NEW MATCH",
+  "hacked":       "Hack detected — match cancelled"
+}
