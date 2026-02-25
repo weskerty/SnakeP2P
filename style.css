@@ -103,7 +103,7 @@ button:disabled { border-color: var(--dim); color: var(--dim); cursor: default; 
 }
 #conn-log div{opacity:.8;}
 
-/* GAME /
+/* GAME */
 #game-screen {
   height: 100dvh;
   display: flex;
@@ -211,7 +211,7 @@ canvas {
   border: 1px solid #ffffff08;
 }
 
-/* GAMEOVER/
+/* GAMEOVER*/
 #gameover {
   height: 100dvh;
   display: flex;
