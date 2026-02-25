@@ -4,8 +4,7 @@
 Este sitio web está licenciado bajo AGPL v3:
 https://www.gnu.org/licenses/agpl-3.0.html
 
-Esto significa que si alguien usa, redistribuye o sirve este sitio a terceros,
-debe poner a disposición **todo el código fuente completo** (HTML, CSS, JS, imágenes, etc.).
+Si usás esto, debés ofrecer el código fuente correspondiente, incluidas tus modificaciones.
 
 Util para Ti 
 Util para Todos.
