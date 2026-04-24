@@ -3,8 +3,7 @@ import{joinRoom,selfId}from'https://esm.run/trystero@0.22.0'
 const T_FB={findMatch:'FIND MATCH',searching:'Searching...',found:'Rival found!',
   disconnected:'Rival disconnected',pressFind:'Press Find Match',youWin:'YOU WIN',
   youLose:'YOU LOSE',draw:'DRAW',score:'Score',you:'YOU',rival:'RIVAL',
-  muteMe:'Mute mic',mutePeer:'Mute rival',newMatch:'NEW MATCH',
-  hacked:'Hack detected — match cancelled'}
+  muteMe:'Mute mic',mutePeer:'Mute rival',newMatch:'NEW MATCH'}
 let T=T_FB
 try{
   const lang=navigator.language?.toLowerCase().startsWith('es')?'es':'en'
@@ -14,13 +13,13 @@ try{
 
 const CFG={appId:'snake-p2p-v3'}
 const LOBBY='snake-lobby-v3'
-const COLS=30,ROWS=30,TICK_MS=120,HASH_IV=20,START_DELAY=4500
+const COLS=30,ROWS=30,TICK_MS=120,START_DELAY=4500
 
 const $=id=>document.getElementById(id)
 const elLobby=$('lobby'),elGame=$('game-screen'),elOver=$('gameover')
 const cv=$('cv'),ctx=cv.getContext('2d')
 const elSt=$('status'),elSrch=$('searching'),btnFind=$('btn-find'),btnRply=$('btn-replay')
-const elS1=$('score-p1'),elS2=$('score-p2'),elSync=$('sync-status')
+const elS1=$('score-p1'),elS2=$('score-p2')
 const elGoT=$('go-title'),elGoM=$('go-msg')
 const btnMS=$('btn-mute-self'),btnMP=$('btn-mute-peer')
 const elLog=$('conn-log')
@@ -63,7 +62,7 @@ const opp=(a,b)=>a.x===-b.x&&a.y===-b.y
 
 let room=null
 let sendInv,getInv,sendAcc,getAcc,sendInit,getInit
-let sendInput,getInput,sendHash,getHash
+let sendInput,getInput
 
 let lobbyPeers=[]
 let matchPeer=null
@@ -73,8 +72,8 @@ let loopId=null
 
 let tick=0,seed=0
 let snakes=null,fruits=null,scores=null,nextDir=null
-let shadowSnakes=null,shadowFruits=null,shadowScores=null,shadowNextDir=null,shadowRng=null
 let lastSentDir=null
+let enemyMoved=false
 
 let ls=null,ra=null,mm=false,pm=false
 
@@ -143,7 +142,6 @@ function joinLobby(){
   ;[sendAcc,getAcc]=room.makeAction('acc')
   ;[sendInit,getInit]=room.makeAction('ini')
   ;[sendInput,getInput]=room.makeAction('inp')
-  ;[sendHash,getHash]=room.makeAction('hsh')
 
   getInv((d,from)=>{
     if(matchPeer)return
@@ -176,20 +174,7 @@ function joinLobby(){
     if(from!==matchPeer||!snakes)return
     const ri=isHost?1:0
     if(!opp(dir,nextDir[ri]))nextDir[ri]=dir
-    if(shadowNextDir&&!opp(dir,shadowNextDir[myIdx]))shadowNextDir[myIdx]=dir
-  })
-
-  getHash(({selfH,peerH,t},from)=>{
-    if(from!==matchPeer||!snakes)return
-    const mySelfH=calcHash(snakes,fruits,scores,t)
-    const myShadowH=calcHash(shadowSnakes,shadowFruits,shadowScores,t)
-    const ok=mySelfH===peerH&&myShadowH===selfH
-    elSync.textContent=ok?'●':'⚠'
-    elSync.classList.toggle('desynced',!ok)
-    if(!ok){
-      log('HACK DETECTED at tick '+t)
-      endGame(null,T.hacked)
-    }
+    enemyMoved=true
   })
 
   room.onPeerJoin(id=>{
@@ -213,6 +198,7 @@ function joinLobby(){
 
 function scheduleStart(ts){
   tick=0
+  enemyMoved=false
   const rng=rng32(seed)
   snakes=[
     {body:[{x:5,y:14},{x:4,y:14},{x:3,y:14}],alive:true},
@@ -221,16 +207,6 @@ function scheduleStart(ts){
   nextDir=[{x:1,y:0},{x:-1,y:0}]
   scores=[0,0];fruits=[]
   for(let i=0;i<3;i++)spawnFruit(rng)
-
-  const srng=rng32(seed)
-  shadowSnakes=[
-    {body:[{x:5,y:14},{x:4,y:14},{x:3,y:14}],alive:true},
-    {body:[{x:24,y:15},{x:25,y:15},{x:26,y:15}],alive:true}
-  ]
-  shadowNextDir=[{x:1,y:0},{x:-1,y:0}]
-  shadowScores=[0,0];shadowFruits=[]
-  shadowRng=srng
-  for(let i=0;i<3;i++)spawnFruitShadow()
 
   lastSentDir=null
 
@@ -268,20 +244,12 @@ function gameTick(rng){
     else s.body.pop()
   }
 
-  shadowTick()
-
   tick++
 
   const curDir=nextDir[myIdx]
   if(!lastSentDir||curDir.x!==lastSentDir.x||curDir.y!==lastSentDir.y){
     sendInput({dir:curDir},[matchPeer])
     lastSentDir={...curDir}
-  }
-
-  if(tick%HASH_IV===0){
-    const selfH=calcHash(snakes,fruits,scores,tick)
-    const peerH=calcHash(shadowSnakes,shadowFruits,shadowScores,tick)
-    sendHash({selfH,peerH,t:tick},[matchPeer])
   }
 
   elS1.textContent=scores[myIdx]
@@ -295,21 +263,6 @@ function gameTick(rng){
   }
 }
 
-function shadowTick(){
-  for(let i=0;i<2;i++){
-    if(!shadowSnakes[i].alive)continue
-    const s=shadowSnakes[i]
-    const head={x:s.body[0].x+shadowNextDir[i].x,y:s.body[0].y+shadowNextDir[i].y}
-    if(head.x<0||head.x>=COLS||head.y<0||head.y>=ROWS){s.alive=false;continue}
-    if(s.body.some(c=>c.x===head.x&&c.y===head.y)){s.alive=false;continue}
-    if(shadowSnakes[1-i].body.some(c=>c.x===head.x&&c.y===head.y)){s.alive=false;continue}
-    s.body.unshift(head)
-    const fi=shadowFruits.findIndex(f=>f.x===head.x&&f.y===head.y)
-    if(fi!==-1){shadowScores[i]++;shadowFruits.splice(fi,1);spawnFruitShadow()}
-    else s.body.pop()
-  }
-}
-
 function spawnFruit(rng){
   let p,t=0
   do{p={x:rngInt(rng,COLS),y:rngInt(rng,ROWS)}}
@@ -318,24 +271,6 @@ function spawnFruit(rng){
     fruits.some(f=>f.x===p.x&&f.y===p.y)
   ))
   fruits.push(p)
-}
-
-function spawnFruitShadow(){
-  let p,t=0
-  do{p={x:rngInt(shadowRng,COLS),y:rngInt(shadowRng,ROWS)}}
-  while(++t<20&&(
-    shadowSnakes.some(s=>s.body.some(c=>c.x===p.x&&c.y===p.y))||
-    shadowFruits.some(f=>f.x===p.x&&f.y===p.y)
-  ))
-  shadowFruits.push(p)
-}
-
-function calcHash(sn,fr,sc,t){
-  if(!sn)return 0
-  const d=JSON.stringify({b:sn.map(s=>s.body),f:fr,s:sc,t})
-  let h=0
-  for(let i=0;i<d.length;i++)h=Math.imul(31,h)+d.charCodeAt(i)|0
-  return h>>>0
 }
 
 const COL=['#00ffaa','#ff2d6b']
@@ -352,6 +287,7 @@ function render(){
     ctx.fill()
   }
   for(let i=0;i<2;i++){
+    if(i!==myIdx&&!enemyMoved)continue
     const s=snakes[i]
     for(let j=0;j<s.body.length;j++){
       const c=s.body[j],pad=j===0?1:3
@@ -384,7 +320,7 @@ function drawCountdown(n){
 function showEnd(won,msg){
   stopVoice()
   if(loopId){clearInterval(loopId);loopId=null}
-  snakes=null;shadowSnakes=null
+  snakes=null
   elGame.classList.add('hidden')
   elOver.classList.remove('hidden')
   elOver.classList.remove('win')
@@ -398,7 +334,7 @@ function showEnd(won,msg){
 function endGame(won,msg){
   if(loopId){clearInterval(loopId);loopId=null}
   stopVoice()
-  matchPeer=null;snakes=null;shadowSnakes=null
+  matchPeer=null;snakes=null
   showEnd(won,msg)
 }
 
@@ -407,8 +343,7 @@ function resetToLobby(){
   stopVoice()
   try{room?.leave()}catch(e){}
   room=null;matchPeer=null;lobbyPeers=[]
-  snakes=null;shadowSnakes=null
-  fruits=null;scores=null;nextDir=null;tick=0;lastSentDir=null
+  snakes=null;fruits=null;scores=null;nextDir=null;tick=0;lastSentDir=null;enemyMoved=false
   if(elLog)elLog.innerHTML=''
   elOver.classList.add('hidden')
   elGame.classList.add('hidden')
